@@ -1,0 +1,7 @@
+# depslib dependency file v1.0
+1650651396 source:c:\users\bauti\onedrive\escritorio\ingenieria\arquitectura de computadoras\codigos mv\mvx\ejecutor.c
+	<stdio.h>
+	<stdlib.h>
+	<string.h>
+	<ctype.h>
+

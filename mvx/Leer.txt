@@ -1,0 +1,1 @@
+Para correr el .exe, entrar a la carpeta /bin/debug
