@@ -26,7 +26,7 @@ typedef struct Mv{
 
   int reg[16];
 
-  int mem[4096];
+  int mem[8192];
 
 }Mv;
 
@@ -34,7 +34,7 @@ typedef struct Mv{
 
 u32 bStringtoInt(char* string);
 void cargaMemoria(Mv* mv, char *argv[]);
-int examinaHeader(FILE* arch);
+void leeHeader(FILE* arch, int* rtadoHeader, MV* mv);
 void muestraCS(Mv mv);
 void DecodificarInstruccion(int instr, int* numOp, int* codInstr,char* mnem);
 void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB,char mnem[],char* argv[],int argc);
@@ -87,46 +87,100 @@ int main(int argc, char *argv[]) {
 
 void cargaMemoria(Mv* mv, char *argv[]){
 
-  char linea[256];
+  char linea[32];
   int inst;
+  char rtadoHeader[] = "";
 
   FILE* arch = fopen(argv[1],"r");
 
   if( arch ){
-    if( examinaHeader(arch) ){
-      while( fgets(linea, 256, arch) ){
+    strcpy(rtadoHeader, leeHeader(arch, rtadoHeader, mv) );
+    if( strcmp(rtadoHeader,"") == 0 ){
+      while( fgets(linea, 32, arch) ){
         mv->mem[mv->reg[0]] = bStringtoInt(linea);
         mv->reg[0]++;
       }
-      fclose(arch);
     }else
-      printf("[!] Carga de memoria fallida, capacidad de memoria excedida. ");
+      printf("%s", rtadoHeader);
   }else
-    printf("[!] Carga de memoria fallida, no se pudo leer el archivo. ");
+    printf("[!] Error al tratar de abrir el archivo. ");
+
+  fclose(arch);
 
 }
 
 //Lee los bloques del header y verifica si el archivo puede ser leido
-int examinaHeader(FILE* arch){
+void leeHeader(FILE* arch, int* rtadoHeader, MV* mv){
 
-  char linea[256];
-  int lc;
+  char linea[32]; //32 bits
+  int bloquesHeader[6];
   int i;
+  char bloque0[4];
+  char bloque5[4];
+  int suma;
 
-  if( !arch ) return 0;
+  //Lectura de los 6 bloques
+  for( i = 0 ; i < 6 ; i++){
+      fgets(linea, 32, arch);
+      bloquesHeader[i] = bStringtoInt(linea);
+  }
 
-  fgets(linea, 256, arch); //Bloque 0 del header
-  fgets(linea, 256, arch); //Bloque 1 del Header (Tamano del codigo)
-  lc = bStringtoInt(linea);
-  if( lc <= 4096 ){        //Si la longitud del codigo NO EXCEDE mi cap. de memoria
-    for( i = 1 ; i <= 4 ; i++)
-      fgets(linea, 256, arch); //Leo los 4 bloques restantes
-    return 1;
+  //Cargo el contenido del primer bloque
+  bloque0[0] = (char) bloquesHeader[0] & 0xFF000000; //Me quedo con el primer caracter
+  bloque0[1] = (char) bloquesHeader[0] & 0x00FF0000;
+  bloque0[2] = (char) bloquesHeader[0] & 0x0000FF00;
+  bloque0[3] = (char) bloquesHeader[0] & 0x000000FF;
+
+  //Cargo el contenido del segundo bloque
+  bloque5[0] = (char) bloquesHeader[5] & 0xFF000000; //Me quedo con el primer caracter
+  bloque5[1] = (char) bloquesHeader[5] & 0x00FF0000;
+  bloque5[2] = (char) bloquesHeader[5] & 0x0000FF00;
+  bloque5[3] = (char) bloquesHeader[5] & 0x000000FF;
+
+  if( (strcmp(bloque0,"MV-2") == 0) && (strcmp(bloque5,"V.22") == 0) ){
+    suma = 0;
+    for( i = 1; i < 5 ; i++)
+      suma += bloquesHeader[i];
+      if( suma > 8192 )
+        strcpy(rtadoHeader,"[!] El proceso no puede ser cargado por memoria insuficiente");
+      else
+        cargaRegistros(mv, bloquesHeader);
+  }else
+    strcpy(rtadoHeader,"[!] El formato del archivo %s.mv2 no es correcto");
   }
-  else{
-    fclose(arch);
-    return 0;
-  }
+
+}
+
+void cargaRegistros(MV* mv, int* bloquesHeader){
+
+  //CS comienza en posicion
+  mv->reg[#CS] = (bloquesHeader[0] << 16) & 0xFFFF0000;
+
+  //DS a continuacion del CS
+  mv->reg[#DS] = (bloquesHeader[1] << 16) & 0xFFFF0000; //(H)
+  mv->reg[#DS] +=  bloquesHeader[0]; //(L)
+
+  //ES a continuacion del DS
+  mv->reg[#ES] = (bloquesHeader[3] << 16) & 0xFFFF0000; //(H)
+  mv->reg[#ES] +=  bloquesHeader[1]; //(L)
+
+  //SS a continuacion del ES
+  mv->reg[#SS] = (bloquesHeader[2] << 16) & 0xFFFF0000; //(H)
+  mv->reg[#SS] +=  bloquesHeader[3]; //(L)
+
+  //Inicializacion de HP
+  mv->reg[#HP] = 0x00020000;
+
+  //Inicializacion de IP
+  mv->reg[#IP] = 0x00030000;
+
+  //Inicializacion de SP
+  mv->reg[#SP] = 0x00010000;
+  mv->reg[#SP] += mv->reg[#SS] >> 16;
+
+  //Inicializacion de BP
+  mv->reg[#BP] = mv->reg[#BP] & 0x0001FFFF;
+
 
 }
 
