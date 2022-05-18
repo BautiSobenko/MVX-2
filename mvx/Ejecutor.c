@@ -16,8 +16,8 @@ const char* oneOp[] = {
 const char* noOp[] = {"stop"};
 
 const char* nombreReg[] = {
-      "DS", " "," "," "," ",
-      "IP"," "," ","CC","AC",
+      "DS", "SS","ES","CS","HP",
+      "IP","SP","BP","CC","AC",
       "A","B","C","D","E","F"};
 
 typedef unsigned int u32;
@@ -34,7 +34,7 @@ typedef struct Mv{
 
 u32 bStringtoInt(char* string);
 void cargaMemoria(Mv* mv, char *argv[]);
-void leeHeader(FILE* arch, int* rtadoHeader, MV* mv);
+void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv);
 void muestraCS(Mv mv);
 void DecodificarInstruccion(int instr, int* numOp, int* codInstr,char* mnem);
 void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB,char mnem[],char* argv[],int argc);
@@ -88,13 +88,12 @@ int main(int argc, char *argv[]) {
 void cargaMemoria(Mv* mv, char *argv[]){
 
   char linea[32];
-  int inst;
   char rtadoHeader[] = "";
 
   FILE* arch = fopen(argv[1],"r");
 
   if( arch ){
-    strcpy(rtadoHeader, leeHeader(arch, rtadoHeader, mv) );
+    leeHeader(arch, rtadoHeader, mv);
     if( strcmp(rtadoHeader,"") == 0 ){
       while( fgets(linea, 32, arch) ){
         mv->mem[mv->reg[0]] = bStringtoInt(linea);
@@ -109,8 +108,42 @@ void cargaMemoria(Mv* mv, char *argv[]){
 
 }
 
+
+void cargaRegistros(Mv* mv, int* bloquesHeader){
+
+  //Inicializacion de CS
+  mv->reg[3] = (bloquesHeader[0] << 16) & 0xFFFF0000; //(H) y (L)
+
+  //DS a continuacion del CS
+  mv->reg[0] = (bloquesHeader[1] << 16) & 0xFFFF0000; //(H)
+  mv->reg[0] +=  bloquesHeader[0];                    //(L)
+
+  //ES a continuacion del DS
+  mv->reg[2] = (bloquesHeader[3] << 16) & 0xFFFF0000; //(H)
+  mv->reg[2] +=  bloquesHeader[1];                    //(L)
+
+  //SS a continuacion del ES
+  mv->reg[1] = (bloquesHeader[2] << 16) & 0xFFFF0000; //(H)
+  mv->reg[11] +=  bloquesHeader[3];                   //(L)
+
+  //Inicializacion de HP
+  mv->reg[4] = 0x00020000;
+
+  //Inicializacion de IP
+  mv->reg[5] = 0x00030000;
+
+  //Inicializacion de SP
+  mv->reg[6] = 0x00010000;
+  mv->reg[6] += mv->reg[1] >> 16;
+
+  //Inicializacion de BP
+  mv->reg[7] = mv->reg[7] & 0x0001FFFF;
+
+
+}
+
 //Lee los bloques del header y verifica si el archivo puede ser leido
-void leeHeader(FILE* arch, int* rtadoHeader, MV* mv){
+void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
 
   char linea[32]; //32 bits
   int bloquesHeader[6];
@@ -126,63 +159,30 @@ void leeHeader(FILE* arch, int* rtadoHeader, MV* mv){
   }
 
   //Cargo el contenido del primer bloque
-  bloque0[0] = (char) bloquesHeader[0] & 0xFF000000; //Me quedo con el primer caracter
-  bloque0[1] = (char) bloquesHeader[0] & 0x00FF0000;
-  bloque0[2] = (char) bloquesHeader[0] & 0x0000FF00;
-  bloque0[3] = (char) bloquesHeader[0] & 0x000000FF;
+  bloque0[0] = (char) (bloquesHeader[0] & 0xFF000000) >> 24; //Me quedo con el primer caracter
+  bloque0[1] = (char) (bloquesHeader[0] & 0x00FF0000) >> 16;
+  bloque0[2] = (char) (bloquesHeader[0] & 0x0000FF00) >> 8;
+  bloque0[3] = (char) (bloquesHeader[0] & 0x000000FF);
 
   //Cargo el contenido del segundo bloque
-  bloque5[0] = (char) bloquesHeader[5] & 0xFF000000; //Me quedo con el primer caracter
-  bloque5[1] = (char) bloquesHeader[5] & 0x00FF0000;
-  bloque5[2] = (char) bloquesHeader[5] & 0x0000FF00;
-  bloque5[3] = (char) bloquesHeader[5] & 0x000000FF;
+  bloque5[0] = (char) (bloquesHeader[5] & 0xFF000000) >> 24; //Me quedo con el primer caracter
+  bloque5[1] = (char) (bloquesHeader[5] & 0x00FF0000) >> 16;
+  bloque5[2] = (char) (bloquesHeader[5] & 0x0000FF00) >> 8;
+  bloque5[3] = (char) (bloquesHeader[5] & 0x000000FF);
 
   if( (strcmp(bloque0,"MV-2") == 0) && (strcmp(bloque5,"V.22") == 0) ){
     suma = 0;
-    for( i = 1; i < 5 ; i++)
+    for( i = 1; i < 5 ; i++){
       suma += bloquesHeader[i];
-      if( suma > 8192 )
-        strcpy(rtadoHeader,"[!] El proceso no puede ser cargado por memoria insuficiente");
-      else
-        cargaRegistros(mv, bloquesHeader);
+    }
+    if( suma > 8192 )
+      strcpy(rtadoHeader,"[!] El proceso no puede ser cargado por memoria insuficiente");
+    else
+      cargaRegistros(mv, bloquesHeader);
   }else
     strcpy(rtadoHeader,"[!] El formato del archivo %s.mv2 no es correcto");
-  }
-
 }
 
-void cargaRegistros(MV* mv, int* bloquesHeader){
-
-  //CS comienza en posicion
-  mv->reg[#CS] = (bloquesHeader[0] << 16) & 0xFFFF0000;
-
-  //DS a continuacion del CS
-  mv->reg[#DS] = (bloquesHeader[1] << 16) & 0xFFFF0000; //(H)
-  mv->reg[#DS] +=  bloquesHeader[0]; //(L)
-
-  //ES a continuacion del DS
-  mv->reg[#ES] = (bloquesHeader[3] << 16) & 0xFFFF0000; //(H)
-  mv->reg[#ES] +=  bloquesHeader[1]; //(L)
-
-  //SS a continuacion del ES
-  mv->reg[#SS] = (bloquesHeader[2] << 16) & 0xFFFF0000; //(H)
-  mv->reg[#SS] +=  bloquesHeader[3]; //(L)
-
-  //Inicializacion de HP
-  mv->reg[#HP] = 0x00020000;
-
-  //Inicializacion de IP
-  mv->reg[#IP] = 0x00030000;
-
-  //Inicializacion de SP
-  mv->reg[#SP] = 0x00010000;
-  mv->reg[#SP] += mv->reg[#SS] >> 16;
-
-  //Inicializacion de BP
-  mv->reg[#BP] = mv->reg[#BP] & 0x0001FFFF;
-
-
-}
 
 //Muestra todas las instrucciones cargadas en memoria
 void muestraCS(Mv mv){
@@ -205,7 +205,7 @@ int complemento2(int vOp, int numOp ){
     }else
       if( (vOp & 0x80) == 0x80 ) //Caso 8 bits
         c2 = vOp | 0xFFFFFF00;
-    }
+  }
   else if( numOp == 1 && c2 < 0 )
     if( (vOp & 0x8000) == 0x8000 ){ //caso 16 bits
       c2 = vOp | 0xFFFF0000;
@@ -553,12 +553,62 @@ u32 bStringtoInt(char* string){
   return ac;
 }
 
+int calculaIndireccion(Mv mv, int vOp){
+
+  int codReg = vOp & 0x00F;
+  int offset = vOp >> 4;
+  int regH = mv.reg[codReg] >> 16;
+  int segm;
+  int tamSegm;
+  int inicioSegm;
+
+  //Recupero la info del segmento
+  if( regH == 1 )        //SP, BP
+    segm = mv.reg[1];
+  else if( regH == 2 )   //HP
+    segm = mv.reg[2];
+  else if ( regH == 3 )  //IP
+    segm = mv.reg[3];
+  else                   //DS
+    segm = mv.reg[0];
+
+  //Obtengo tamano del segmento
+  tamSegm = segm & 0xFFFF0000;
+  //Obtengo direccion relativa al segmento
+  inicioSegm = segm & 0x0000FFFF;
+
+  if( (inicioSegm + offset) > tamSegm )
+    return -1;
+  else
+    return inicioSegm + offset;
+    //Retorno la direccion relativa al segmento
+
+}
+
 void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
 
   //Variables de op de reg.
   int codReg;
+  int indireccion1;
+  int indireccion2;
   int sectorReg;
 
+  if( tOpA == 3 ){ //! OpA -> Indirecto
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+    if( tOpB == 0 )//mov [eax + x] = 10
+      mv->mem[indireccion1] = vOpB;
+    else
+      if( tOpB == 1 ) //mov [eax+x] = eax
+        mv->mem[indireccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
+      else
+        if( tOpB == 2 ) //mov [eax+x] = [10]
+          mv->mem[indireccion1] = mv->mem[mv->reg[0] + vOpB];
+        else
+          if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
+            indireccion2 = calculaIndireccion(*mv, vOpB);
+            mv->mem[indireccion1] = mv->mem[indireccion2];
+          }
+  }else
   if( tOpA==2 ){ //!OpA -> directo -> [10]
 
     if( tOpB == 0 ) // mov [10] 10
@@ -921,6 +971,113 @@ void xor( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
 }
 
+void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
+
+  int indireccion1;
+  int indireccion2;
+  char aux;
+  int len;
+
+  if( tOpA == 3 ){         //! opA indirecto
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+    if( tOpB == 3 ){        //opB indirecto
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] = strlen(mv->mem[indireccion2]);
+    }else if( tOpB == 2 )   //opB directo
+      mv->mem[indireccion1] = strlen(mv->mem[mv->reg[0] + vOpB]);
+
+  }else if( tOpA == 2 ){   //! opA directo
+
+     if( tOpB == 3 ){       //opB indirecto
+       indireccion2 = calculaIndireccion(*mv, vOpB);
+       mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[indireccion2]);
+     }else if( tOpB == 2 ){ //opB directo
+       mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[mv->reg[0] +  vOpB]);
+     }
+
+  }else if( tOpA == 1 ){  //! opA de registro
+
+     if ( tOpB == 3 ){    // opB indirecto
+       indireccion2 = calculaIndireccion(*mv, vOpB);
+       len = strlen( mv->mem[indireccion2] );
+     }else if( tOpB == 2 )  //opB directo
+       len = strlen( mv->mem[mv->reg[0] + vOpB] );
+
+     AlmacenaEnRegistro(mv, vOpA, len, 2);
+
+  }
+
+}
+
+void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
+
+  int indireccion1, indireccion2;
+  int direc, direc2;
+
+  if ( tOpA == 3 ){
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+    if( tOpB == 3 ){
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      while( mv->mem[indireccion2] != '\0' ){
+        mv->mem[indireccion1++] = mv->mem[indireccion2++];
+      }
+    }else if ( tOpB == 2 ){
+      direc = mv->reg[0] + vOpB;
+      while( mv->mem[direc] != '\0' ){
+        mv->mem[indireccion1++] = mv->mem[direc++];
+      }
+    }
+
+  }else if( tOpA == 2 ){
+
+    direc = mv->reg[0] + vOpA;
+    if( tOpB == 3 ){
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      while( mv->mem[indireccion2] != '\0' ){
+        mv->mem[direc++] = mv->mem[indireccion2++];
+      }
+    }else if ( tOpB == 2 ){
+      direc2 = mv->reg[0] + vOpB;
+      while( mv->mem[direc2] != '\0' ){
+        mv->mem[direc++] = mv->mem[direc2++];
+      }
+    }
+
+  }
+
+}
+
+void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
+
+  int indireccion1, indireccion2;
+  int rtado;
+
+  if( tOpA == 3 ){
+
+      indireccion1 = calculaIndireccion(*mv, vOpA);
+      if( tOpB == 3 ){
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        rtado = strcmp(mv->mem[indireccion1],mv->mem[indireccion2]);
+      }else if( tOpB == 2 ){
+        rtado = strcmp(mv->mem[indireccion1], mv->mem[mv->reg[0]+vOpB]);
+      }
+      modCC(mv, rtado);
+
+  }else if( tOpA == 2 ){
+
+      if( tOpB == 3 ){
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[indireccion2]);
+      }else if( tOpB == 2 ){
+        rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[mv->reg[0]+vOpB]);
+      }
+      modCC(mv, rtado);
+  }
+
+}
+
 void shl( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
@@ -1048,7 +1205,7 @@ void sysRead( Mv* mv ){
       scanf("%s",string);
 
       i = 0;
-      while( i < strlen(string) && string[i] != "" ){
+      while( (i < strlen(string)) && (string[i] != "") ){
         mv->mem[ mv->reg[0] + celda + i ] = string[i];
         i++;
       }
