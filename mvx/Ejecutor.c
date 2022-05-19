@@ -69,10 +69,6 @@ void jmp( Mv* mv,int tOpA,int vOpA );
 int main(int argc, char *argv[]) {
 
   Mv mv;
-  mv.reg[5] = 0;
-  mv.reg[0] = 0;
-
-  sysC(argv, argc);
 
   cargaMemoria(&mv, argv);
 
@@ -112,11 +108,11 @@ void cargaMemoria(Mv* mv, char *argv[]){
 void cargaRegistros(Mv* mv, int* bloquesHeader){
 
   //Inicializacion de CS
-  mv->reg[3] = (bloquesHeader[0] << 16) & 0xFFFF0000; //(H) y (L)
+  mv->reg[3] = (bloquesHeader[4] << 16) & 0xFFFF0000; //(H) y (L)
 
   //DS a continuacion del CS
   mv->reg[0] = (bloquesHeader[1] << 16) & 0xFFFF0000; //(H)
-  mv->reg[0] +=  bloquesHeader[0];                    //(L)
+  mv->reg[0] +=  bloquesHeader[4];                    //(L)
 
   //ES a continuacion del DS
   mv->reg[2] = (bloquesHeader[3] << 16) & 0xFFFF0000; //(H)
@@ -124,7 +120,7 @@ void cargaRegistros(Mv* mv, int* bloquesHeader){
 
   //SS a continuacion del ES
   mv->reg[1] = (bloquesHeader[2] << 16) & 0xFFFF0000; //(H)
-  mv->reg[11] +=  bloquesHeader[3];                   //(L)
+  mv->reg[1] +=  bloquesHeader[3];                   //(L)
 
   //Inicializacion de HP
   mv->reg[4] = 0x00020000;
@@ -134,10 +130,10 @@ void cargaRegistros(Mv* mv, int* bloquesHeader){
 
   //Inicializacion de SP
   mv->reg[6] = 0x00010000;
-  mv->reg[6] += mv->reg[1] >> 16;
+  mv->reg[6] += (mv->reg[1] >> 16);
 
   //Inicializacion de BP
-  mv->reg[7] = mv->reg[7] & 0x0001FFFF;
+  mv->reg[7] = mv->reg[7] & 0x00010000;
 
 
 }
@@ -148,8 +144,8 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
   char linea[32]; //32 bits
   int bloquesHeader[6];
   int i;
-  char bloque0[4];
-  char bloque5[4];
+  char bloque0[5];
+  char bloque5[5];
   int suma;
 
   //Lectura de los 6 bloques
@@ -163,12 +159,15 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
   bloque0[1] = (char) (bloquesHeader[0] & 0x00FF0000) >> 16;
   bloque0[2] = (char) (bloquesHeader[0] & 0x0000FF00) >> 8;
   bloque0[3] = (char) (bloquesHeader[0] & 0x000000FF);
+  bloque0[4] = '\0';
 
-  //Cargo el contenido del segundo bloque
+  //Cargo el contenido del quinto bloque
   bloque5[0] = (char) (bloquesHeader[5] & 0xFF000000) >> 24; //Me quedo con el primer caracter
   bloque5[1] = (char) (bloquesHeader[5] & 0x00FF0000) >> 16;
   bloque5[2] = (char) (bloquesHeader[5] & 0x0000FF00) >> 8;
   bloque5[3] = (char) (bloquesHeader[5] & 0x000000FF);
+  bloque5[4] = '\0';
+
 
   if( (strcmp(bloque0,"MV-2") == 0) && (strcmp(bloque5,"V.22") == 0) ){
     suma = 0;
@@ -180,7 +179,7 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
     else
       cargaRegistros(mv, bloquesHeader);
   }else
-    strcpy(rtadoHeader,"[!] El formato del archivo %s.mv2 no es correcto");
+    strcpy(rtadoHeader,"[!] El formato del archivo .mv2 no es correcto");
 }
 
 
@@ -330,10 +329,12 @@ void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB
       case 0xB://!not
         not( mv, vOpA, tOpA );
         break;
-    }else{     //!stop
-      mv->reg[5]=mv->reg[0];
-  }
+    }else      //!stop
+      stop(mv);
+}
 
+void stop(Mv* mv){
+  mv->reg[5]=mv->reg[0];
 }
 
 void not( Mv* mv, int vOp, int tOp ){
@@ -555,33 +556,60 @@ u32 bStringtoInt(char* string){
 
 int calculaIndireccion(Mv mv, int vOp){
 
-  int codReg = vOp & 0x00F;
+  int codReg = vOp & 0x000F;
   int offset = vOp >> 4;
   int regH = mv.reg[codReg] >> 16;
+  int regL = mv.reg[codReg] & 0x0000FFFF;
   int segm;
   int tamSegm;
   int inicioSegm;
 
+  /*[eax]
+  eax = 0003XXXX
+  eax = 0002XXXX
+  eax = 0001XXXX
+  eax = 0000XXXX
+  */
+
   //Recupero la info del segmento
-  if( regH == 1 )        //SP, BP
-    segm = mv.reg[1];
-  else if( regH == 2 )   //HP
-    segm = mv.reg[2];
-  else if ( regH == 3 )  //IP
-    segm = mv.reg[3];
-  else                   //DS
-    segm = mv.reg[0];
+
+  segm = mv.reg[regH]; //CS, DS, SS, ES
 
   //Obtengo tamano del segmento
   tamSegm = segm & 0xFFFF0000;
+
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( (inicioSegm + offset) > tamSegm )
-    return -1;
+  if( (mv.reg[codReg] < 0) && ((regL + offset) > tamSegm) && ((regL + offset) < inicioSegm) )
+    return -1; //Segmentation fault
   else
-    return inicioSegm + offset;
+    return inicioSegm + regL + offset;
     //Retorno la direccion relativa al segmento
+
+}
+
+int calculaDireccion(Mv mv, int vOp){
+
+  int segm;
+  int tamSegm;
+  int inicioSegm;
+
+
+  //Recupero la info del segmento DS
+  segm = mv.reg[0];
+
+  //Obtengo tamano del DS
+  tamSegm = segm & 0xFFFF0000;
+
+  //Obtengo direccion relativa del DS
+  inicioSegm = segm & 0x0000FFFF;
+
+  if( vOp > tamSegm )
+    return -1; //Segmentation fault
+  else
+    return inicioSegm + vOp; //Retorno la direccion relativa al DS
+
 
 }
 
@@ -595,21 +623,24 @@ void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
     indireccion1 = calculaIndireccion(*mv, vOpA);
-    if( tOpB == 0 )//mov [eax + x] = 10
-      mv->mem[indireccion1] = vOpB;
-    else
-      if( tOpB == 1 ) //mov [eax+x] = eax
-        mv->mem[indireccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
+    if( indireccion1 == -1 ){
+      printf("Segmentation fault\n");
+      stop(mv);
+    }else
+      if( tOpB == 0 )//mov [eax + x] = 10
+        mv->mem[indireccion1] = vOpB;
       else
-        if( tOpB == 2 ) //mov [eax+x] = [10]
-          mv->mem[indireccion1] = mv->mem[mv->reg[0] + vOpB];
+        if( tOpB == 1 ) //mov [eax+x] = eax
+          mv->mem[indireccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
         else
-          if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
-            indireccion2 = calculaIndireccion(*mv, vOpB);
-            mv->mem[indireccion1] = mv->mem[indireccion2];
-          }
-  }else
-  if( tOpA==2 ){ //!OpA -> directo -> [10]
+          if( tOpB == 2 ) //mov [eax+x] = [10]
+            mv->mem[indireccion1] = mv->mem[mv->reg[0] + vOpB];
+          else
+            if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
+              indireccion2 = calculaIndireccion(*mv, vOpB);
+              mv->mem[indireccion1] = mv->mem[indireccion2];
+            }
+  }else if( tOpA==2 ){ //!OpA -> directo -> [10]
 
     if( tOpB == 0 ) // mov [10] 10
       mv->mem[mv->reg[0] + vOpA] = vOpB;
@@ -981,8 +1012,18 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   if( tOpA == 3 ){         //! opA indirecto
 
     indireccion1 = calculaIndireccion(*mv, vOpA);
+    if( indireccion1 == -1 ){
+      printf("Segmentation fault\n");
+      stop(mv);
+      exit(-1);
+    }
     if( tOpB == 3 ){        //opB indirecto
       indireccion2 = calculaIndireccion(*mv, vOpB);
+      if( indireccion2 == -1 ){
+        printf("Segmentation fault\n");
+        stop(mv);
+        exit(-1);
+      }
       mv->mem[indireccion1] = strlen(mv->mem[indireccion2]);
     }else if( tOpB == 2 )   //opB directo
       mv->mem[indireccion1] = strlen(mv->mem[mv->reg[0] + vOpB]);
@@ -991,6 +1032,11 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
      if( tOpB == 3 ){       //opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
+       if( indireccion2 == -1 ){
+         printf("Segmentation fault\n");
+         stop(mv);
+         exit(-1);
+       }
        mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[indireccion2]);
      }else if( tOpB == 2 ){ //opB directo
        mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[mv->reg[0] +  vOpB]);
@@ -1000,6 +1046,11 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
      if ( tOpB == 3 ){    // opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
+       if( indireccion2 == -1 ){
+         printf("Segmentation fault\n");
+         stop(mv);
+         exit(-1);
+       }
        len = strlen( mv->mem[indireccion2] );
      }else if( tOpB == 2 )  //opB directo
        len = strlen( mv->mem[mv->reg[0] + vOpB] );
@@ -1018,8 +1069,18 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
   if ( tOpA == 3 ){
 
     indireccion1 = calculaIndireccion(*mv, vOpA);
+    if( indireccion1 == -1 ){
+      printf("Segmentation fault\n");
+      stop(mv);
+      exit(-1);
+    }
     if( tOpB == 3 ){
       indireccion2 = calculaIndireccion(*mv, vOpB);
+      if( indireccion2 == -1 ){
+        printf("Segmentation fault\n");
+        stop(mv);
+        exit(-1);
+      }
       while( mv->mem[indireccion2] != '\0' ){
         mv->mem[indireccion1++] = mv->mem[indireccion2++];
       }
@@ -1035,6 +1096,11 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
     direc = mv->reg[0] + vOpA;
     if( tOpB == 3 ){
       indireccion2 = calculaIndireccion(*mv, vOpB);
+      if( indireccion2 == -1 ){
+        printf("Segmentation fault\n");
+        stop(mv);
+        exit(-1);
+      }
       while( mv->mem[indireccion2] != '\0' ){
         mv->mem[direc++] = mv->mem[indireccion2++];
       }
@@ -1057,8 +1123,18 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
   if( tOpA == 3 ){
 
       indireccion1 = calculaIndireccion(*mv, vOpA);
+      if( indireccion1 == -1 ){
+        printf("Segmentation fault\n");
+        stop(mv);
+        exit(-1);
+      }
       if( tOpB == 3 ){
         indireccion2 = calculaIndireccion(*mv, vOpB);
+        if( indireccion2 == -1 ){
+          printf("Segmentation fault\n");
+          stop(mv);
+          exit(-1);
+        }
         rtado = strcmp(mv->mem[indireccion1],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
         rtado = strcmp(mv->mem[indireccion1], mv->mem[mv->reg[0]+vOpB]);
@@ -1069,6 +1145,11 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 
       if( tOpB == 3 ){
         indireccion2 = calculaIndireccion(*mv, vOpB);
+        if( indireccion2 == -1 ){
+          printf("Segmentation fault\n");
+          stop(mv);
+          exit(-1);
+        }
         rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
         rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[mv->reg[0]+vOpB]);
