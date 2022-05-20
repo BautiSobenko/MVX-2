@@ -16,7 +16,7 @@ const char* oneOp[] = {
 const char* noOp[] = {"stop"};
 
 const char* nombreReg[] = {
-      "DS", "SS","ES","CS","HP",
+      "DS","SS","ES","CS","HP",
       "IP","SP","BP","CC","AC",
       "A","B","C","D","E","F"};
 
@@ -581,8 +581,10 @@ int calculaIndireccion(Mv mv, int vOp){
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( (mv.reg[codReg] < 0) && ((regL + offset) > tamSegm) && ((regL + offset) < inicioSegm) )
-    return -1; //Segmentation fault
+  if( (mv.reg[codReg] < 0) && ((regL + offset) > tamSegm) && ((regL + offset) < inicioSegm) ){
+    printf("Segmentation fault");
+    exit(-1);
+  }
   else
     return inicioSegm + regL + offset;
     //Retorno la direccion relativa al segmento
@@ -595,20 +597,21 @@ int calculaDireccion(Mv mv, int vOp){
   int tamSegm;
   int inicioSegm;
 
+  //Recupero la informacion del segmento al cual quiero direccionarme
+  segm = mv.reg[vOp >> 16];
 
-  //Recupero la info del segmento DS
-  segm = mv.reg[0];
+  //Obtengo tamano del segmento
+  tamSegm = segm >> 16;
 
-  //Obtengo tamano del DS
-  tamSegm = segm & 0xFFFF0000;
-
-  //Obtengo direccion relativa del DS
+  //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( vOp > tamSegm )
-    return -1; //Segmentation fault
+  if( vOp > tamSegm ){
+    printf("Segmentation fault");
+    exit(-1);
+  }
   else
-    return inicioSegm + vOp; //Retorno la direccion relativa al DS
+    return inicioSegm + vOp; //Retorno la direccion relativa
 
 
 }
@@ -1311,15 +1314,87 @@ void sysRead( Mv* mv ){
     }
 }
 
+void sysStringRead(Mv* mv){
+
+    int direccion;
+    int charMax;
+    int bitPrompt;
+    int HEreg, tamSegmento;
+    int i;
+
+    char *str;
+
+    //Recupero EDX y calculo la direccion relativa al segmento correspondiente
+    direccion = calculaDireccion(*mv, mv->reg[0xE]);
+
+    //Recupero la cantidad max de caracteres a leer
+    charMax = mv->reg[0xC];
+
+    str = (char*)malloc(charMax*sizeof(char));
+
+    //Recupero bit de prompt
+    bitPrompt = (mv->reg[0xA] & 0x800) >> 11;
+
+    if( bitPrompt == 0 )
+      printf("[%d]: ", direccion);
+
+    fgets(str, charMax, stdin);
+
+    //Obtengo la parte alta del registro E (me indica el segmento)
+    HEreg = mv->reg[0xE] >> 16;
+
+    //Obtengo el tamaño del segmento
+    tamSegmento = mv->reg[HEReg] >> 16;
+
+    if( strlen(str) > (tamSegmento - direccion) ){
+      printf("Segmentation fault");
+      exit(-1);
+    }else{
+      i = 0;
+      while( str[i] != '\0' ){
+        mv->mem[direccion++] = str[i++];
+      }
+    }
+
+}
+
+void sysStringWrite(Mv *mv){
+
+  char* str;
+  int direccion;
+  int bitPrompt, bitEndl;
+
+  //Recupero posicion de inicio de string
+  str = (char*) calculaDireccion(*mv, mv->reg[0xE]);
+
+  //Recupero bit de prompt
+  bitPrompt = (mv->reg[0xA] & 0x800) >> 11;
+
+  //Recupero bit de endline
+  bitEndl = (mv->reg[0xA] & 0x100) >> 8;
+
+  if( bitPrompt == 0 )
+    printf("[%d]: ", direccion);
+
+  puts(str);
+
+  if( bitEndl == 0 )
+    printf("\n");
+
+}
+
 void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc){
 
-  if( vOpA == 2 ){ //! WRITE :D
+  if( vOpA == 0x2 )      //! Write
     sysWrite( mv );
-  }else if( vOpA == 1 ){ //! READ
+  else if( vOpA == 0x1 ) //! Read
     sysRead( mv );
-  }else if( vOpA == 0xF ){ //! BREAKPOINT
+  else if( vOpA == 0xF ) //! BreakPoint
     sysBreakpoint(mv,argv,argc,mnem,0);
-  }
+  else if ( vOpA == 0x3 )//! StringRead
+    sysStringRead(mv);
+  else if( vOpA == 0x4)  //! StringWrite
+    sysStringWrite(mv);
 
   }
 
