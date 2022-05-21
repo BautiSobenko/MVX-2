@@ -65,6 +65,16 @@ void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc);
 void falsoStep(Mv* mv,char opA[],char opB[],int i);
 int apareceFlag(char* argv[],int argc, char* flag );
 void jmp( Mv* mv,int tOpA,int vOpA );
+void rnd(Mv *mv, int tOpA, int vOpA);
+void slen(Mv *mv,int tOpA,int tOpB,int vOpA,int vOpB);
+void smov(Mv *mv,int tOpA,int tOpB,int vOpA,int vOpB);
+void scmp(Mv *mv,int tOpA,int tOpB,int vOpA,int vOpB);
+void push(Mv *mv,int tOpA,int vOpA);
+void pop(Mv *mv,int tOpA,int vOpA);
+void call(Mv *mv,int tOpA,int vOpA);
+void ret();
+int calculaDireccion(Mv mv, int vOp);
+int calculaIndireccion(Mv mv, int vOp);
 
 int main(int argc, char *argv[]) {
 
@@ -199,9 +209,9 @@ int complemento2(int vOp, int numOp ){
   int c2 = vOp;
 
   if( numOp == 2 && c2 < 0 ){
-    if( (vOp & 0x800) == 0x800 ){ // Caso 12 bits
+    if( (vOp & 0x800) == 0x800 ) // Caso 12 bits
       c2 = vOp | 0xFFFFF000;
-    }else
+    else
       if( (vOp & 0x80) == 0x80 ) //Caso 8 bits
         c2 = vOp | 0xFFFFFF00;
   }
@@ -279,6 +289,15 @@ void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB
       case 0xB: //!xor
         xor(mv, tOpA, tOpB, vOpA, vOpB);
         break;
+      case 0xC: //!slen
+        slen(mv, tOpA, tOpB, vOpA, vOpB);
+        break;
+      case 0xD: //!smov
+        smov(mv, tOpA, tOpB, vOpA, vOpB);
+        break;
+      case 0xE: //!scmp
+        scmp(mv, tOpA, tOpB, vOpA, vOpB);
+        break;
       }
   }else
   if( numOp == 1 )
@@ -323,14 +342,145 @@ void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB
         vOpB = (vOpB & 0x0000FFFF);
         mv->reg[9] = ( mv->reg[9] & 0x0000FFFF ) | ( vOpB << 16 ) ;
         break;
-      case 0xA: //rnd
+      case 0xA: //!rnd
         rnd(mv, tOpA, vOpA);
         break;
-      case 0xB://!not
+      case 0xB: //!not
         not( mv, vOpA, tOpA );
         break;
-    }else      //!stop
-      stop(mv);
+      case 0xC: //!push
+        push(mv, tOpA, vOpA);
+        break;
+      case 0xD: //!pop
+        pop(mv, tOpA, vOpA);
+        break;
+      case 0xE: //!call
+        call(mv, tOpA, vOpA);
+        break;
+    }else
+      switch(codInstr){
+        case 0x0: //!ret
+          ret();
+          break;
+        case 0x1: //!stop
+          stop();
+          break;
+      }
+
+}
+
+void pop(Mv *mv, int tOpA, int vOpA){
+
+    //Recupero el tamano del SS
+    int tamSS = (mv->reg[1] & 0xFFFF0000) >> 16;
+
+    //Recupero el inicio del SS
+    int inicioSS = (mv->reg[1] & 0x0000FFFF);
+
+    //Recupero el valor de SP
+    int valorSP = (mv->reg[6] & 0x0000FFFF);
+
+    if( valorSP > (inicioSS + tamSS) ){
+      printf (" STACK UNDERFLOW ");
+      exit(-1);
+    }
+    else{
+      //tOpB=2 porque seria directo y vOpB = mv->reg[6] porque paso donde apunta la pila
+      mov(mv,tOpA,2,vOpA,mv->reg[6]);
+      mv->reg[6]++;
+    }
+}
+
+void push(Mv *mv, int tOpA, int vOpA){
+
+    int direccion;
+
+    //Recupero el inicio del SS
+    int inicioSS = mv->reg[1] & 0x0000FFFF;
+
+    //Recupero el valor de SP
+    int valorSP = mv->reg[6] & 0x0000FFFF;
+
+    //Si el SP supera el SS, stack overflow
+    if( mv->reg[6] <= inicioSS ){
+      printf (" STACK OVERFLOW ");
+      exit(-1);
+    }
+    else{
+        mv->reg[6]--;       //Decremento SP
+        valorSP--;
+        if( tOpA == 0 )     //Inmediato
+          mv->mem[valorSP] = vOpA;
+        else
+          if( tOpA == 1)    //De registro
+            mv->mem[valorSP] = ObtenerValorDeRegistro(*mv, vOpA, 1);
+          else              //Directo
+            if( tOpA == 2 ){
+              direccion = calculaDireccion(*mv, vOpA);
+              mv->mem[valorSP] = mv->mem[ direccion ];
+            }
+            else{           //Indirecto
+              direccion = calculaIndireccion(*mv, vOpA);
+              mv->mem[valorSP] = mv->mem[direccion];
+            }
+
+    }
+}
+
+void ret(Mv *mv){
+
+    //Recupero el tamano del SS
+    int tamSS = (mv->reg[1] & 0xFFFF0000) >> 16;
+
+    //Recupero el inicio del SS
+    int inicioSS = (mv->reg[1] & 0x0000FFFF);
+
+    //Recupero el valor de SP
+    int valorSP = (mv->reg[6] & 0x0000FFFF);
+
+    if( valorSP > (inicioSS + tamSS) ){
+      printf (" STACK UNDERFLOW ");
+      exit(-1);
+    }
+    else{
+      //"salta" colocando la direccion de retorno en el reg IP
+      mv->reg[5] = mv->mem[valorSP++];
+    }
+
+}
+
+void call(Mv *mv, int tOpA, int vOpA){
+
+    int direccion;
+
+    //Recupero el inicio del SS
+    int inicioSS = mv->reg[1] & 0x0000FFFF;
+
+    //Recupero el valor de SP
+    int valorSP = mv->reg[6] & 0x0000FFFF;
+
+    //Si el SP supera el SS, stack overflow
+    if( mv->reg[6] <= inicioSS ){
+      printf (" STACK OVERFLOW ");
+      exit(-1);
+    }
+    else{
+        mv->reg[6]--;
+        valorSP--;
+        mv->mem[valorSP] = mv->reg[5]++; //Guardo el IP para luego retornar
+        if( tOpA == 0 ){             //Inmediato
+            mv->reg[5] = vOpA;
+        }else
+            if( tOpA == 1 ){         //De registro
+                mv->reg[5] = ObtenerValorDeRegistro(*mv,vOpA, 1);
+            }else if( tOpA == 2 ){   //Directo
+              direccion = calculaDireccion(*mv, vOpA);
+              mv->reg[5] = mv->mem[direccion];
+            }else{                   //Indirecto
+              direccion = calculaIndireccion(*mv, vOpA);
+              mv->reg[5] = mv->mem[direccion];
+            }
+    }
 }
 
 void stop(Mv* mv){
@@ -576,7 +726,7 @@ int calculaIndireccion(Mv mv, int vOp){
   segm = mv.reg[regH]; //CS, DS, SS, ES
 
   //Obtengo tamano del segmento
-  tamSegm = segm & 0xFFFF0000;
+  tamSegm = segm >> 16;
 
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
@@ -626,10 +776,6 @@ void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
     indireccion1 = calculaIndireccion(*mv, vOpA);
-    if( indireccion1 == -1 ){
-      printf("Segmentation fault\n");
-      stop(mv);
-    }else
       if( tOpB == 0 )//mov [eax + x] = 10
         mv->mem[indireccion1] = vOpB;
       else
@@ -1015,18 +1161,8 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   if( tOpA == 3 ){         //! opA indirecto
 
     indireccion1 = calculaIndireccion(*mv, vOpA);
-    if( indireccion1 == -1 ){
-      printf("Segmentation fault\n");
-      stop(mv);
-      exit(-1);
-    }
     if( tOpB == 3 ){        //opB indirecto
       indireccion2 = calculaIndireccion(*mv, vOpB);
-      if( indireccion2 == -1 ){
-        printf("Segmentation fault\n");
-        stop(mv);
-        exit(-1);
-      }
       mv->mem[indireccion1] = strlen(mv->mem[indireccion2]);
     }else if( tOpB == 2 )   //opB directo
       mv->mem[indireccion1] = strlen(mv->mem[mv->reg[0] + vOpB]);
@@ -1035,11 +1171,6 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
      if( tOpB == 3 ){       //opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
-       if( indireccion2 == -1 ){
-         printf("Segmentation fault\n");
-         stop(mv);
-         exit(-1);
-       }
        mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[indireccion2]);
      }else if( tOpB == 2 ){ //opB directo
        mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[mv->reg[0] +  vOpB]);
@@ -1049,11 +1180,6 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
      if ( tOpB == 3 ){    // opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
-       if( indireccion2 == -1 ){
-         printf("Segmentation fault\n");
-         stop(mv);
-         exit(-1);
-       }
        len = strlen( mv->mem[indireccion2] );
      }else if( tOpB == 2 )  //opB directo
        len = strlen( mv->mem[mv->reg[0] + vOpB] );
@@ -1072,18 +1198,8 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
   if ( tOpA == 3 ){
 
     indireccion1 = calculaIndireccion(*mv, vOpA);
-    if( indireccion1 == -1 ){
-      printf("Segmentation fault\n");
-      stop(mv);
-      exit(-1);
-    }
     if( tOpB == 3 ){
       indireccion2 = calculaIndireccion(*mv, vOpB);
-      if( indireccion2 == -1 ){
-        printf("Segmentation fault\n");
-        stop(mv);
-        exit(-1);
-      }
       while( mv->mem[indireccion2] != '\0' ){
         mv->mem[indireccion1++] = mv->mem[indireccion2++];
       }
@@ -1099,11 +1215,6 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
     direc = mv->reg[0] + vOpA;
     if( tOpB == 3 ){
       indireccion2 = calculaIndireccion(*mv, vOpB);
-      if( indireccion2 == -1 ){
-        printf("Segmentation fault\n");
-        stop(mv);
-        exit(-1);
-      }
       while( mv->mem[indireccion2] != '\0' ){
         mv->mem[direc++] = mv->mem[indireccion2++];
       }
@@ -1126,18 +1237,8 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
   if( tOpA == 3 ){
 
       indireccion1 = calculaIndireccion(*mv, vOpA);
-      if( indireccion1 == -1 ){
-        printf("Segmentation fault\n");
-        stop(mv);
-        exit(-1);
-      }
       if( tOpB == 3 ){
         indireccion2 = calculaIndireccion(*mv, vOpB);
-        if( indireccion2 == -1 ){
-          printf("Segmentation fault\n");
-          stop(mv);
-          exit(-1);
-        }
         rtado = strcmp(mv->mem[indireccion1],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
         rtado = strcmp(mv->mem[indireccion1], mv->mem[mv->reg[0]+vOpB]);
@@ -1148,11 +1249,6 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 
       if( tOpB == 3 ){
         indireccion2 = calculaIndireccion(*mv, vOpB);
-        if( indireccion2 == -1 ){
-          printf("Segmentation fault\n");
-          stop(mv);
-          exit(-1);
-        }
         rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
         rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[mv->reg[0]+vOpB]);
@@ -1274,16 +1370,16 @@ void sysRead( Mv* mv ){
     int prompt = 0;
 
     //Los 12 bits menos significativos me daran informacion de modo de lectura
-    aux = mv->reg[10] & 0x00000FFF;      //12 bits de AX
-    celda = mv->reg[13];                 //EDX -> // Posicion de mem inicial desde donde empiezo la lect
-    celdaMax = mv->reg[12] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
+    aux = mv->reg[0xA] & 0x00000FFF;      //12 bits de AX
+    celda = mv->reg[0xE];                 //EDX -> // Posicion de mem inicial desde donde empiezo la lect
+    celdaMax = mv->reg[0xC] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
     printf("\n");
     //Prendido octavo bit -> Leo string, guardo caracter a caracter
     if( (aux & 0x100) == 0x100 ){
 
       char string[1000]="";
 
-      if( (aux & 0x800) == 0 ) //prompt
+      if( (aux & 0x800) == 0x000 ) //prompt
         printf("[%04d]:",celda);
 
       scanf("%s",string);
@@ -1298,11 +1394,10 @@ void sysRead( Mv* mv ){
 
       for( i = celda; i < celda + celdaMax ; i++ ){
 
-        if( (aux & 0x800) == 0 ){ //prompt
+        if( (aux & 0x800) == 0x00 ) //prompt
           printf("[%04d]:",i);
-        }
 
-        if( (aux & 0x00F) == 0x001 ) //Interpreta decimal
+        if( (aux & 0x00F) == 0x001 )     //Interpreta decimal
           scanf("%d", &num);
         else if( (aux & 0x00F) == 0x004) //Interpreta octal
           scanf("%O", &num);
@@ -1311,7 +1406,7 @@ void sysRead( Mv* mv ){
 
         mv->mem[mv->reg[0] + i] = num;
 
-    }
+      }
 }
 
 void sysStringRead(Mv* mv){
@@ -1344,7 +1439,7 @@ void sysStringRead(Mv* mv){
     HEreg = mv->reg[0xE] >> 16;
 
     //Obtengo el tamaño del segmento
-    tamSegmento = mv->reg[HEReg] >> 16;
+    tamSegmento = mv->reg[HEreg] >> 16;
 
     if( strlen(str) > (tamSegmento - direccion) ){
       printf("Segmentation fault");
@@ -1383,6 +1478,12 @@ void sysStringWrite(Mv *mv){
 
 }
 
+void sysCls(){
+
+  system("cls");
+
+}
+
 void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc){
 
   if( vOpA == 0x2 )      //! Write
@@ -1391,12 +1492,14 @@ void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc){
     sysRead( mv );
   else if( vOpA == 0xF ) //! BreakPoint
     sysBreakpoint(mv,argv,argc,mnem,0);
-  else if ( vOpA == 0x3 )//! StringRead
+  else if( vOpA == 0x3 ) //! StringRead
     sysStringRead(mv);
   else if( vOpA == 0x4)  //! StringWrite
     sysStringWrite(mv);
+  else if( vOpA == 0x7)  //! ClearScreen
+    sysCls();
 
-  }
+}
 
 //Recorre los argumentos ingresados desde el ejecutable
 //y si existe retorna 1
@@ -1531,14 +1634,26 @@ int DevuelveValor(Mv mv,int tOpA,int vOpA, int numOp){
 
 void rnd(Mv *mv, int tOpA, int vOpA){
 
-  int aux = vOpA;
+  int direccion;
 
-  if (tOpA == 1) { //de registro
-    aux = ObtenerValorDeRegistro(*mv, vOpA, 1);
-  } else if (tOpA == 2) { //directo
-    aux = mv->mem[mv->reg[0] + vOpA];
-  }
+  int aux;
+  if( tOpA == 0 )         //Inmediato
+    aux = vOpA;
+  else
+    if (tOpA == 1)        //De registro
+      aux = ObtenerValorDeRegistro(*mv, vOpA, 1);
+    else
+      if (tOpA == 2) {    //Directo
+        direccion = calculaDireccion(*mv, vOpA);
+        aux = mv->mem[direccion];
+      }else
+        if( tOpA == 3 ){  //Indirecto
+          direccion = calculaIndireccion(*mv, vOpA);
+          aux = mv->mem[direccion];
+        }
 
+  //Cargo en AC el valor aleatorio entre 0 y el valor del operando
   mv->reg[9] = rand() % (aux + 1);
+
 }
 
