@@ -85,7 +85,7 @@ int main(int argc, char *argv[]) {
   printf("Codigo: \n");
   do{
     step(&mv,argv,argc);
-  }while( (0 <= mv.reg[5]) && ( mv.reg[5] < mv.reg[0] ));
+  }while( (0 <= (mv.reg[5] & 0x0000FFFF) ) && ( (mv.reg[5] & 0x0000FFFF) < (mv.reg[0] & 0x0000FFFF) ));
 
   return 0;
 
@@ -95,6 +95,7 @@ void cargaMemoria(Mv* mv, char *argv[]){
 
   char linea[32];
   char rtadoHeader[] = "";
+  int direccion;
 
   FILE* arch = fopen(argv[1],"r");
 
@@ -102,7 +103,8 @@ void cargaMemoria(Mv* mv, char *argv[]){
     leeHeader(arch, rtadoHeader, mv);
     if( strcmp(rtadoHeader,"") == 0 ){
       while( fgets(linea, 32, arch) ){
-        mv->mem[mv->reg[0]] = bStringtoInt(linea);
+        direccion = calculaDireccion(*mv, mv->reg[0]);
+        mv->mem[direccion] = bStringtoInt(linea);
         mv->reg[0]++;
       }
     }else
@@ -197,8 +199,10 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
 void muestraCS(Mv mv){
 
   int i;
-  for( i = 0; i < mv.reg[0]; i++){
-    printf("%08X\n",mv.mem[i]);
+  int direccion = calculaDireccion(mv, mv.reg[0]):
+  int tamSegm = mv.reg[0] >> 16;
+  for( i = 0; i < tamSegm; i++){
+    printf("%08X\n",mv.mem[direccion++]);
   }
 
 }
@@ -484,17 +488,21 @@ void call(Mv *mv, int tOpA, int vOpA){
 }
 
 void stop(Mv* mv){
-  mv->reg[5]=mv->reg[0];
+
+  mv->reg[5] = mv->reg[0] & 0x0000FFFF;
+
 }
 
 void not( Mv* mv, int vOp, int tOp ){
 
+  int direccion;
   int valorNeg = ~DevuelveValor(*mv, tOp, vOp);
 
   if( tOp == 1 ){ //De registro
     AlmacenaEnRegistro( mv, vOp, valorNeg, 1 );
   }else if( tOp == 2 ){ //Directo
-    mv->mem[mv->reg[0] + vOp] = valorNeg;
+    direccion = calculaDireccion(*mv, vOp);
+    mv->mem[direccion] = valorNeg;
   }
   modCC(mv,valorNeg);
 
@@ -748,7 +756,7 @@ int calculaDireccion(Mv mv, int vOp){
   int inicioSegm;
 
   //Recupero la informacion del segmento al cual quiero direccionarme
-  segm = mv.reg[vOp >> 16];
+  segm = mv.reg[vOp >> 16]; // 0000, 0001, 0002, 0003
 
   //Obtengo tamano del segmento
   tamSegm = segm >> 16;
@@ -756,7 +764,7 @@ int calculaDireccion(Mv mv, int vOp){
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( vOp > tamSegm ){
+  if( (vOp < 0) &&(vOp > tamSegm) ){
     printf("Segmentation fault");
     exit(-1);
   }
@@ -770,8 +778,8 @@ void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
 
   //Variables de op de reg.
   int codReg;
-  int indireccion1;
-  int indireccion2;
+  int indireccion1, indireccion2;
+  int direccion1, direccion2;
   int sectorReg;
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
@@ -782,49 +790,92 @@ void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
         if( tOpB == 1 ) //mov [eax+x] = eax
           mv->mem[indireccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
         else
-          if( tOpB == 2 ) //mov [eax+x] = [10]
-            mv->mem[indireccion1] = mv->mem[mv->reg[0] + vOpB];
-          else
+          if( tOpB == 2 ){ //mov [eax+x] = [10]
+            direccion2 = calculaDireccion(*mv, vOpB);
+            mv->mem[indireccion1] = mv->mem[direccion2];
+          }else
             if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
               indireccion2 = calculaIndireccion(*mv, vOpB);
               mv->mem[indireccion1] = mv->mem[indireccion2];
             }
   }else if( tOpA==2 ){ //!OpA -> directo -> [10]
 
+    direccion1 = calculaDireccion(*mv, vOpA);
+
     if( tOpB == 0 ) // mov [10] 10
-      mv->mem[mv->reg[0] + vOpA] = vOpB;
+      mv->mem[direccion1] = vOpB;
     else
     if( tOpB == 1 ) // mov [10] AX
-      mv->mem[mv->reg[0] + vOpA] = ObtenerValorDeRegistro(*mv,vOpB,2);
-    else          // mov [vOpA] [vOpB]
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpB];
+      mv->mem[direccion1] = ObtenerValorDeRegistro(*mv,vOpB,2);
+    else
+      if( tOpB == 2 ){         // mov [vOpA] [vOpB]
+        direccion2 = calculaDireccion(*mv, vOpB);
+        mv->mem[direccion1] = mv->mem[direccion2];
+      }else{
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        mv->mem[direccion1] = mv->mem[indireccion2];
+      }
 
   }else if( tOpA == 1 ){          //!Op -> De registro -> EAX
 
       if( tOpB == 0 ){ // mov AX 10
         AlmacenaEnRegistro(mv, vOpA, vOpB, 2);
       }else
-      if( tOpB == 2){ // mov AX [10]
-        AlmacenaEnRegistro( mv, vOpA, mv->mem[mv->reg[0] + vOpB], 2 );
-      }else{ //mov AX EAX
-        AlmacenaEnRegistro( mv, vOpA, ObtenerValorDeRegistro(*mv,vOpB,2), 2 );
+        if( tOpB == 2){ // mov AX [10]
+          direccion2 = calculaDireccion(*mv, vOpB);
+          AlmacenaEnRegistro( mv, vOpA, mv->mem[direccion2], 2 );
+        }else
+          if( tOpB == 1) //mov AX EAX
+            AlmacenaEnRegistro( mv, vOpA, ObtenerValorDeRegistro(*mv,vOpB,2), 2 );
+          else {
+            indireccion2 = calculaIndireccion(*mv, vOpB);
+            AlmacenaEnRegistro(mv, vOpA, mv->mem[indireccion2], 2);
+          }
+
       }
-    }
 }
 
 void add(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+  if( tOpA == 3 ){ //! OpA -> Indirecto
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+      if( tOpB == 0 )//mov [eax + x] = 10
+        mv->mem[indireccion1] += vOpB;
+      else
+        if( tOpB == 1 ) //mov [eax+x] = eax
+          mv->mem[indireccion1] += ObtenerValorDeRegistro(*mv, vOpB, 2);
+        else
+          if( tOpB == 2 ){ //mov [eax+x] = [10]
+            direccion2 = calculaDireccion(*mv, vOpB);
+            mv->mem[indireccion1] += mv->mem[direccion2];
+          }else
+            if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
+              indireccion2 = calculaIndireccion(*mv, vOpB);
+              mv->mem[indireccion1] += mv->mem[indireccion2];
+            }
+  }
+  else if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+
+    direccion1 = calculaDireccion(*mv, vOpA);
 
     if( tOpB == 0 ){ // add [10] 10
-      mv->mem[mv->reg[0] + vOpA] += vOpB;
-    }else if( tOpB == 2){ //add [vOpA] [vOpB]
-      mv->mem[mv->reg[0] + vOpA] += mv->mem[mv->reg[0] + vOpB];
-    }else{//directo y reg
-     mv->mem[mv->reg[0] + vOpA] += ObtenerValorDeRegistro(*mv,vOpB,2);
-    }
+      mv->mem[direccion1] += vOpB;
+    }else
+      if( tOpB == 2){ //add [vOpA] [vOpB]
+        direccion2 = calculaDireccion(*mv, vOpB);
+        mv->mem[direccion1] += mv->mem[direccion2];
+      }else
+        if( tOpB == 1 )//directo y reg
+          mv->mem[direccion1] += ObtenerValorDeRegistro(*mv,vOpB,2);
+        else{
+          indireccion2 = calculaIndireccion(*mv, vOpB);
+          mv->mem[direccion1] += mv->mem[indireccion2];
+        }
+
+
     modCC(mv, mv->mem[mv->reg[0] + vOpA]);
 
   }else
@@ -834,9 +885,13 @@ void add(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
       if( tOpB == 0 ){ // add reg 10
         aux += vOpB;
       }else if( tOpB == 2){ //add reg [vOpB]
-        aux += mv->mem[mv->reg[0] + vOpB];
-      }else{//reg y reg
+        direccion2 = calculaDireccion(*mv, vOpB)
+        aux += mv->mem[direccion2];
+      }else if( tOpB == 1 ) //reg y reg
         aux += ObtenerValorDeRegistro(*mv,vOpB,2);
+      else{
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        aux += mv->mem[indireccion2];
       }
       AlmacenaEnRegistro(mv, vOpA, aux, 2);
       modCC(mv, aux);
@@ -855,17 +910,45 @@ void modCC( Mv* mv, int op ){
 void mul(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+
+  if( tOpA == 3 ){ //! OpA -> Indirecto
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+      if( tOpB == 0 )//mov [eax + x] = 10
+        mv->mem[indireccion1] *= vOpB;
+      else
+        if( tOpB == 1 ) //mov [eax+x] = eax
+          mv->mem[indireccion1] *= ObtenerValorDeRegistro(*mv, vOpB, 2);
+        else
+          if( tOpB == 2 ){ //mov [eax+x] = [10]
+            direccion2 = calculaDireccion(*mv, vOpB);
+            mv->mem[indireccion1] *= mv->mem[direccion2];
+          }else
+            if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
+              indireccion2 = calculaIndireccion(*mv, vOpB);
+              mv->mem[indireccion1] *= mv->mem[indireccion2];
+            }
+  }
+  else if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+
+    direccion1 = calculaDireccion(*mv, vOpA);
 
     if( tOpB == 0 ){ // add [10] 10
-      mv->mem[mv->reg[0] + vOpA] *= vOpB;
-    }else if( tOpB == 2){ //add [vOpA] [vOpB]
-      mv->mem[mv->reg[0] + vOpA] *= mv->mem[mv->reg[0] + vOpB];
-    }else{//directo y de reg
-     mv->mem[mv->reg[0] + vOpA] *= ObtenerValorDeRegistro(*mv,vOpB,2);
+      mv->mem[direccion1] *= vOpB;
     }
-    modCC(mv, mv->mem[mv->reg[0] + vOpA]);
+    else if( tOpB == 2){ //add [vOpA] [vOpB]
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] *= mv->mem[direccion2];
+    }
+    else if( tOpB == 1 ){//directo y de reg
+      mv->mem[direccion1] *= ObtenerValorDeRegistro(*mv,vOpB,2);
+    }
+    else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] *= mv->mem[indireccion2];
+    }
+    modCC(mv, mv->mem[direccion1]);
 
   }else
     if( tOpA == 1 ){ //! tOpA -> DeRegistro EAX
@@ -874,9 +957,13 @@ void mul(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
       if( tOpB == 0 ){ // add reg 10
         aux *= vOpB;
       }else if( tOpB == 2){ //add reg [vOpB]
-        aux *= mv->mem[mv->reg[0] + vOpB];
-      }else{// reg reg
+        direccion2 = calculaDireccion(*mv, vOpB);
+        aux *= mv->mem[direccion2];
+      }else if( tOpB == 1){// reg reg
         aux *= ObtenerValorDeRegistro(*mv,vOpB,2);
+      }else{
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        aux *= mv->mem[indireccion2];
       }
       AlmacenaEnRegistro(mv, vOpA, aux, 2);
       modCC(mv, aux);
@@ -886,28 +973,62 @@ void mul(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 void sub(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+    if( tOpA == 3 ){ //! OpA -> Indirecto
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+      if( tOpB == 0 )//mov [eax + x] = 10
+        mv->mem[indireccion1] -= vOpB;
+      else
+        if( tOpB == 1 ) //mov [eax+x] = eax
+          mv->mem[indireccion1] -= ObtenerValorDeRegistro(*mv, vOpB, 2);
+        else
+          if( tOpB == 2 ){ //mov [eax+x] = [10]
+            direccion2 = calculaDireccion(*mv, vOpB);
+            mv->mem[indireccion1] -= mv->mem[direccion2];
+          }else
+            if( tOpB == 3 ){ //mov [eax+x] = [ebx+2];
+              indireccion2 = calculaIndireccion(*mv, vOpB);
+              mv->mem[indireccion1] -= mv->mem[indireccion2];
+            }
+
+  }else if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+
+    direccion1 = calculaDireccion(*mv, vOpA);
 
     if( tOpB == 0 ){ // add [10] 10
-      mv->mem[mv->reg[0] + vOpA] -= vOpB;
-    }else if( tOpB == 2){ //add [vOpA] [vOpB]
-      mv->mem[mv->reg[0] + vOpA] -= mv->mem[mv->reg[0] + vOpB];
-    }else{
-     mv->mem[mv->reg[0] + vOpA] -= ObtenerValorDeRegistro(*mv,vOpB,2);
+      mv->mem[direccion1] -= vOpB;
     }
-    modCC(mv, mv->mem[mv->reg[0] + vOpA]);
+    else if( tOpB == 2){ //add [vOpA] [vOpB]
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] -= mv->mem[direccion2];
+    }
+    else if( tOpB == 1){
+     mv->mem[direccion1] -= ObtenerValorDeRegistro(*mv,vOpB,2);
+    }
+    else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] -= mv->mem[indireccion2];
+    }
+    modCC(mv, mv->mem[direccion1]);
 
-  }else
-    if( tOpA == 1 ){ //! tOpA -> DeRegistro EAX
+  }else if( tOpA == 1 ){ //! tOpA -> DeRegistro EAX
 
       aux = ObtenerValorDeRegistro(*mv,vOpA,2);
       if( tOpB == 0 ){ // add [10] 10
         aux -= vOpB;
-      }else if( tOpB == 2){ //add [vOpA] [vOpB]
-        aux -= mv->mem[mv->reg[0] + vOpB];
-      }else{
+      }
+      else if( tOpB == 2){ //add [vOpA] [vOpB]
+        direccion2 = calculaDireccion(*mv, vOpB);
+        aux -= mv->mem[direccion2];
+      }
+      else if( tOpB == 1 ){
         aux -= ObtenerValorDeRegistro(*mv,vOpB,2);
+      }
+      else{
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        aux -= mv->mem[indireccion2];
       }
       AlmacenaEnRegistro(mv, vOpA, aux, 2);
       modCC(mv, aux);
@@ -919,36 +1040,88 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
   int aux;
   int auxB;
   int cero = 0;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+  if( tOpA == 3 ){ //! OpA -> Indirecto
 
+    indireccion1 = calculaIndireccion(*mv, vOpA);
     if( tOpB == 0 ){ // add [10] 10
       if( vOpB ){
-        mv->reg[9] = mv->mem[mv->reg[0] + vOpA] % vOpB;
-        mv->mem[mv->reg[0] + vOpA] /= vOpB;
+        mv->reg[9] = mv->mem[indireccion1] % vOpB;
+        mv->mem[indireccion1] /= vOpB;
       }
       else
         printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
     }else if( tOpB == 2){ //add [vOpA] [vOpB]
-      if( mv->mem[mv->reg[0] + vOpB] ){
-        mv->reg[9] = mv->mem[mv->reg[0] + vOpA] % mv->mem[mv->reg[0] + vOpB];
-        mv->mem[mv->reg[0] + vOpA] /= mv->mem[mv->reg[0] + vOpB];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      if( mv->mem[direccion2] ){
+        mv->reg[9] = mv->mem[indireccion1] % mv->mem[direccion2];
+        mv->mem[indireccion1] /= mv->mem[direccion2];
       }
       else
         printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
-    }else{
+    }else if( tOpB == 1 ){
        auxB = ObtenerValorDeRegistro(*mv,vOpB,2);
        if( auxB ){
-         mv->reg[9] = mv->mem[mv->reg[0] + vOpA] % auxB;
-         mv->mem[mv->reg[0] + vOpA] /= auxB;
+         mv->reg[9] = mv->mem[indireccion1] % auxB;
+         mv->mem[indireccion1] /= auxB;
        }
        else
          printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      if( mv->mem[indireccion2] ){
+        mv->reg[9] = mv->mem[indireccion1] % mv->mem[indireccion2];
+        mv->mem[indireccion1] /= mv->mem[indireccion2];
+      }else
+        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
     }
+
     modCC(mv, mv->mem[mv->reg[0] + vOpA]);
-  }else
+  }
+  else if( tOpA==2 ){ //! tOpA -> Directo [vOpA]
+
+    direccion1 = calculaDireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){ // add [10] 10
+      if( vOpB ){
+        mv->reg[9] = mv->mem[direccion1] % vOpB;
+        mv->mem[direccion1] /= vOpB;
+      }
+      else
+        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+    }else if( tOpB == 2){ //add [vOpA] [vOpB]
+      direccion2 = calculaDireccion(*mv, vOpB);
+      if( mv->mem[direccion2] ){
+        mv->reg[9] = mv->mem[direccion1] % mv->mem[direccion2];
+        mv->mem[direccion1] /= mv->mem[direccion2];
+      }
+      else
+        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+    }else if( tOpB == 1 ){
+       auxB = ObtenerValorDeRegistro(*mv,vOpB,2);
+       if( auxB ){
+         mv->reg[9] = mv->mem[direccion1] % auxB;
+         mv->mem[direccion1] /= auxB;
+       }
+       else
+         printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      if( mv->mem[indireccion2] ){
+        mv->reg[9] = mv->mem[direccion1] % mv->mem[indireccion2];
+        mv->mem[direccion1] /= mv->mem[indireccion2];
+      }else
+        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+    }
+    modCC(mv, mv->mem[direccion1]);
+  }
+
+  else
     if( tOpA == 1 ){ //! tOpA -> DeRegistro EAX
+
       aux = ObtenerValorDeRegistro(*mv,vOpA,2);
+
       if( tOpB == 0 ){ // add [10] 10
         if( vOpB ){
           mv->reg[9] = aux % vOpB;
@@ -957,17 +1130,26 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
         else
           cero = 1;
       }else if( tOpB == 2){ //add [vOpA] [vOpB]
-        if( mv->mem[mv->reg[0] + vOpB] ){
-          mv->reg[9] = aux % mv->mem[mv->reg[0] + vOpB];
-          aux /= mv->mem[mv->reg[0] + vOpB];
+        direccion2 = calculaDireccion(*mv, vOpB);
+        if( mv->mem[direccion1] ){
+          mv->reg[9] = aux % mv->mem[direccion2];
+          aux /= mv->mem[direccion2];
         }
         else
           cero = 1;
-      }else{
+      }else if( tOpB == 1 ){
         auxB = ObtenerValorDeRegistro(*mv,vOpB,2);
         if( auxB ){
           mv->reg[9] = aux % auxB;
           aux /= auxB;
+        }
+        else
+          cero = 1;
+      }else{
+        indireccion2 = calculaIndireccion(*mv, vOpB);
+        if( mv->mem[indireccion2] ){
+          mv->reg[9] = aux % mv->mem[indireccion2];
+          aux /= mv->mem[indireccion2];
         }
         else
           cero = 1;
@@ -982,27 +1164,60 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 void swap( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
 
-    aux = mv->mem[mv->reg[0] + vOpA];
+  if( tOpA == 3 ){
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+    aux = mv->mem[indireccion1];
+
     if( tOpB == 2 ){
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpB];
-      mv->mem[mv->reg[0] + vOpB] = aux;
-    }else if( tOpB == 2 ){
-      mv->mem[mv->reg[0] + vOpA] = ObtenerValorDeRegistro(*mv, vOpB, 2);
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] = mv->mem[direccion2];
+      mv->mem[direccion2] = aux;
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
       AlmacenaEnRegistro(mv, vOpB, aux,2);
+    }else if ( tOpB == 3 ){
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] = mv->mem[indireccion2];
+      mv->mem[indireccion2] = aux;
+    }
+
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv,vOpA);
+    aux = mv->mem[direccion1];
+
+    if( tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[direccion2];
+      mv->mem[direccion2] = aux;
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] = ObtenerValorDeRegistro(*mv, vOpB, 2);
+      AlmacenaEnRegistro(mv, vOpB, aux,2);
+    }else if ( tOpB == 3 ){
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[indireccion2];
+      mv->mem[indireccion2] = aux;
     }
 
   }else if( tOpA ==1 ){ //!De registro
 
     aux = ObtenerValorDeRegistro(*mv, vOpA,2);
+
     if( tOpB == 2 ){
-      AlmacenaEnRegistro(mv,vOpA,mv->mem[mv->reg[0] + vOpB],2);
-      mv->mem[mv->reg[0] + vOpB] = aux;
+      direccion2 = calculaDireccion(*mv, vOpB);
+      AlmacenaEnRegistro(mv,vOpA,mv->mem[direccion2],2);
+      mv->mem[direccion2] = aux;
     }else if( tOpB == 1 ){
       AlmacenaEnRegistro(mv, vOpA, ObtenerValorDeRegistro(*mv, vOpB,2),2);
       AlmacenaEnRegistro(mv, vOpB, aux,2);
+    }else if( tOpB == 3){
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      AlmacenaEnRegistro(mv, vOpA, mv->mem[indireccion2] ,2);
+      mv->mem[indireccion2] = aux;
     }
 
   }
@@ -1013,41 +1228,72 @@ void cmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int sub;
   int aux;
+  int indireccion1, indireccion2;
 
   if( tOpA == 0 ){                 //! Op inmediato
 
     if( tOpB == 0 ){               // cmp 10, 11
       sub = vOpA - vOpB;
     }else if( tOpB == 2 ){         // cmp 10, [11]
-      sub = vOpA - mv->mem[mv->reg[0] + vOpB];
-    }else{                         // cmp 10, EAX
+      direccion2 = calculaDireccion(*mv, vOpB);
+      sub = vOpA - mv->mem[direccion2];
+    }else if( tOpB == 1) {                         // cmp 10, EAX
       sub = vOpA - ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      sub = vOpA - mv->mem[indireccion2];
     }
 
-  }else if( tOpA==2 ){           //! Op directo
+  }else if( tOpA == 2 ){           //! Op directo
 
-     aux = mv->mem[mv->reg[0] + vOpA];
+     direccion1 = calculaDireccion(*mv, vOpA);
+     aux = mv->mem[direccion1];
 
      if( tOpB == 0 ){              // cmp [10], 11
       sub = aux - vOpB;
     }else if( tOpB == 2 ){         // cmp [10], [11]
-      sub = aux - mv->mem[mv->reg[0] + vOpB];
-    }else{                         // cmp [10], EAX
+      direccion2 = calculaDireccion(*mv, vOpB);
+      sub = aux - mv->mem[direccion2];
+    }else if( tOpB == 1){                         // cmp [10], EAX
       sub = aux - ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      sub = aux - mv->mem[indireccion2];
     }
 
-  }else{                           //! Op de registro
+  }else if( tOpA == 1 ){                           //! Op de registro
+
     aux = ObtenerValorDeRegistro(*mv, vOpA,2);
 
     if( tOpB == 0 ){               // cmp EAX, 11
       sub = aux - vOpB;
     }else if( tOpB == 2 ){         // cmp EAX, [11]
-      sub = aux - mv->mem[mv->reg[0] + vOpB];
-    }else{                         // cmp EAX, AX
+      direccion2 = calculaDireccion(*mv, vOpB);
+      sub = aux - mv->mem[direccion2];
+    }else if( tOpB == 1){                         // cmp EAX, AX
       sub = aux - ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      sub = aux - mv->mem[indireccion2];
     }
+  }else{
 
+    indireccion2 = calculaIndireccion(*mv, vOpA);
+    aux = mv->mem[indireccion2];
+
+    if( tOpB == 0 ){
+      sub = aux - vOpB;
+    }else if( tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv, vOpB);
+      sub = aux - mv->mem[direccion2];
+    }else if( tOpB == 1){
+      sub = aux - ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      sub = aux - mv->mem[indireccion2];
+    }
   }
+
   modCC(mv, sub);
 
 }
@@ -1056,16 +1302,41 @@ void and( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int op;
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
+  if( tOpA == 3){
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
 
     if( tOpB == 0 ){
-      mv->mem[mv->reg[0] + vOpA] &= vOpB;
+      mv->mem[indireccion1] &= vOpB;
     }else if( tOpB == 2 ){
-      mv->mem[mv->reg[0] + vOpA] &= mv->mem[mv->reg[0] + vOpB];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] &= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] &= ObtenerValorDeRegistro(*mv, vOpB,2);
     }else{
-      mv->mem[mv->reg[0] + vOpA] &= ObtenerValorDeRegistro(*mv, vOpB,2);
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] &= mv->mem[indireccion2];
     }
+    op = mv->mem[indireccion1];
+
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){
+      mv->mem[direccion1] &= vOpB;
+    }else if( tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] &= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] &= ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] &= mv->mem[indireccion2];
+    }
+
     op = mv->mem[mv->reg[0] + vOpA];
 
   }else if( tOpA == 1 ){ //! Op de registro
@@ -1074,9 +1345,13 @@ void and( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
     if( tOpB == 0 ){
       op = aux & vOpB;
     }else if( tOpB == 2 ){
-      op = aux & mv->mem[mv->reg[0] + vOpB];
-    }else{
+      direccion2 = calculaDireccion(*mv, vOpB);
+      op = aux & mv->mem[direccion2];
+    }else if( tOpB == 1 ){
       op = aux & ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      op = aux & mv->mem[indireccion2];
     }
     AlmacenaEnRegistro(mv, vOpA, op,2);
 
@@ -1089,15 +1364,39 @@ void or( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int op;
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
+  if( tOpA == 3){
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
 
     if( tOpB == 0 ){
-      mv->mem[mv->reg[0] + vOpA] |= vOpB;
+      mv->mem[indireccion1] |= vOpB;
     }else if( tOpB == 2 ){//b directo
-      mv->mem[mv->reg[0] + vOpA] |= mv->mem[mv->reg[0] + vOpB];
-    }else{//de registro
-      mv->mem[mv->reg[0] + vOpA] |= ObtenerValorDeRegistro(*mv, vOpB,2);
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] |= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] |= ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] |= mv->mem[indireccion2];
+    }
+    op = mv->mem[indireccion1];
+
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){
+      mv->mem[direccion1] |= vOpB;
+    }else if( tOpB == 2 ){//b directo
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] |= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] |= ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] |= mv->mem[indireccion2];
     }
     op = mv->mem[mv->reg[0] + vOpA];
 
@@ -1106,10 +1405,14 @@ void or( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
     if( tOpB == 0 ){
       op = aux | vOpB;
-    }else if( tOpB == 2 ){// b directo
-      op = aux | mv->mem[mv->reg[0] + vOpB];
-    }else{// b registro
+    }else if( tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv, vOpB);
+      op = aux | mv->mem[direccion2];
+    }else if( tOpB == 1 ){
       op = aux | ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      op = aux | mv->mem[indireccion2];
     }
     AlmacenaEnRegistro(mv, vOpA, op,2);
 
@@ -1122,15 +1425,39 @@ void xor( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int op;
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
+    if( tOpA == 3){ //!Op indirecto
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
 
     if( tOpB == 0 ){
-      mv->mem[mv->reg[0] + vOpA] ^= vOpB;
+      mv->mem[indireccion1] ^= vOpB;
     }else if( tOpB == 2 ){
-      mv->mem[mv->reg[0] + vOpA] ^= mv->mem[mv->reg[0] + vOpB];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] ^= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] ^= ObtenerValorDeRegistro(*mv, vOpB,2);
     }else{
-      mv->mem[mv->reg[0] + vOpA] ^= ObtenerValorDeRegistro(*mv, vOpB,2);
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] ^= mv->mem[indireccion2];
+    }
+    op = mv->mem[indireccion1];
+
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){
+      mv->mem[direccion1] ^= vOpB;
+    }else if( tOpB == 2 ){//b directo
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] ^= mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] ^= ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] ^= mv->mem[indireccion2];
     }
     op = mv->mem[mv->reg[0] + vOpA];
 
@@ -1140,9 +1467,13 @@ void xor( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
     if( tOpB == 0 ){
       op = aux ^ vOpB;
     }else if( tOpB == 2 ){
-      op = aux ^ mv->mem[mv->reg[0] + vOpB];
-    }else{
+      direccion2 = calculaDireccion(*mv, vOpB);
+      op = aux ^ mv->mem[direccion2];
+    }else if( tOpB == 1 ){
       op = aux ^ ObtenerValorDeRegistro(*mv, vOpB,2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      op = aux ^ mv->mem[indireccion2];
     }
     AlmacenaEnRegistro(mv, vOpA, op,2);
 
@@ -1164,16 +1495,21 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
     if( tOpB == 3 ){        //opB indirecto
       indireccion2 = calculaIndireccion(*mv, vOpB);
       mv->mem[indireccion1] = strlen(mv->mem[indireccion2]);
-    }else if( tOpB == 2 )   //opB directo
-      mv->mem[indireccion1] = strlen(mv->mem[mv->reg[0] + vOpB]);
+    }else if( tOpB == 2 ){   //opB directo
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] = strlen(mv->mem[direccion2]);
+    }
 
   }else if( tOpA == 2 ){   //! opA directo
 
+     direccion1 = calculaDireccion(*mv, vOpA);
+
      if( tOpB == 3 ){       //opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
-       mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[indireccion2]);
+       mv->mem[direccion1] = strlen(mv->mem[indireccion2]);
      }else if( tOpB == 2 ){ //opB directo
-       mv->mem[mv->reg[0] +  vOpA] = strlen(mv->mem[mv->reg[0] +  vOpB]);
+       direccion2 = calculaDireccion(*mv, vOpB);
+       mv->mem[direccion1] = strlen(mv->mem[direccion2]);
      }
 
   }else if( tOpA == 1 ){  //! opA de registro
@@ -1181,8 +1517,10 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
      if ( tOpB == 3 ){    // opB indirecto
        indireccion2 = calculaIndireccion(*mv, vOpB);
        len = strlen( mv->mem[indireccion2] );
-     }else if( tOpB == 2 )  //opB directo
-       len = strlen( mv->mem[mv->reg[0] + vOpB] );
+     }else if( tOpB == 2 ){  //opB directo
+       direccion2 = calculaDireccion(*mv, vOpB)
+       len = strlen( mv->mem[direccion2] );
+     }
 
      AlmacenaEnRegistro(mv, vOpA, len, 2);
 
@@ -1204,24 +1542,25 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
         mv->mem[indireccion1++] = mv->mem[indireccion2++];
       }
     }else if ( tOpB == 2 ){
-      direc = mv->reg[0] + vOpB;
-      while( mv->mem[direc] != '\0' ){
-        mv->mem[indireccion1++] = mv->mem[direc++];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      while( mv->mem[direccion2] != '\0' ){
+        mv->mem[indireccion1++] = mv->mem[direccion2++];
       }
     }
 
   }else if( tOpA == 2 ){
 
-    direc = mv->reg[0] + vOpA;
+    direccion1 = calculaDireccion(*mv, vOpA);
+
     if( tOpB == 3 ){
       indireccion2 = calculaIndireccion(*mv, vOpB);
       while( mv->mem[indireccion2] != '\0' ){
-        mv->mem[direc++] = mv->mem[indireccion2++];
+        mv->mem[direccion1++] = mv->mem[indireccion2++];
       }
     }else if ( tOpB == 2 ){
-      direc2 = mv->reg[0] + vOpB;
-      while( mv->mem[direc2] != '\0' ){
-        mv->mem[direc++] = mv->mem[direc2++];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      while( mv->mem[direccion1] != '\0' ){
+        mv->mem[direccion1++] = mv->mem[direccion2++];
       }
     }
 
@@ -1241,17 +1580,21 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
         indireccion2 = calculaIndireccion(*mv, vOpB);
         rtado = strcmp(mv->mem[indireccion1],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
-        rtado = strcmp(mv->mem[indireccion1], mv->mem[mv->reg[0]+vOpB]);
+        direccion2 = calculaDireccion(*mv, vOpB);
+        rtado = strcmp(mv->mem[indireccion1], mv->mem[direccion2]);
       }
       modCC(mv, rtado);
 
   }else if( tOpA == 2 ){
 
+      direccion1 = calculaDireccion(*mv, vOpA);
+
       if( tOpB == 3 ){
         indireccion2 = calculaIndireccion(*mv, vOpB);
-        rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[indireccion2]);
+        rtado = strcmp(mv->mem[direccion1],mv->mem[indireccion2]);
       }else if( tOpB == 2 ){
-        rtado = strcmp(mv->mem[mv->reg[0]+vOpA],mv->mem[mv->reg[0]+vOpB]);
+        direccion2 = calculaDireccion(*mv, vOpB);
+        rtado = strcmp(mv->mem[direccion1],mv->mem[direccion2]);
       }
       modCC(mv, rtado);
   }
@@ -1261,31 +1604,60 @@ void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 void shl( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
+  if( tOpA == 3 ){
 
-    if( tOpB == 0 ){ //shl [#] 10
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] << vOpB;
-    }else if (tOpB == 2 ){ //shl [#] [#2]
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] << mv->mem[mv->reg[0] + vOpB];
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){
+      mv->mem[indireccion1] = mv->mem[indireccion1] << vOpB;
+    }else if (tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[indireccion1] = mv->mem[indireccion1] << mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] = mv->mem[indireccion1] << ObtenerValorDeRegistro(*mv, vOpB, 2);
     }else{
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] << ObtenerValorDeRegistro(*mv, vOpB, 2);
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] = mv->mem[indireccion1] << mv->mem[indireccion2];
     }
 
-    aux = mv->mem[mv->reg[0] + vOpA];
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){ //shl [#] 10
+      mv->mem[direccion1] = mv->mem[direccion1] << vOpB;
+    }else if (tOpB == 2 ){ //shl [#] [#2]
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[direccion1] << mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] = mv->mem[direccion1] << ObtenerValorDeRegistro(*mv, vOpB, 2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[direccion1] << mv->mem[indireccion2];
+    }
+
+    aux = mv->mem[direccion1];
 
   }else if( tOpA == 1 ){ //! Op de registro
+
      aux = ObtenerValorDeRegistro(*mv, vOpA, 2);
 
      if( tOpB == 0 ){ //shl EAX 10
       aux = aux << vOpB;
     }else if (tOpB == 2 ){ //shl EAX [#]
-      aux = aux << mv->mem[mv->reg[0] + vOpB];
-    }else{
+      direccion2 = calculaDireccion(*mv, vOpB);
+      aux = aux << mv->mem[direccion2];
+    }else if( tOpB == 1 ){
       aux = aux << ObtenerValorDeRegistro(*mv, vOpB, 2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      aux = aux << mv->mem[indireccion2];
     }
     AlmacenaEnRegistro(mv, vOpA, aux, 2);
   }
+
   modCC(mv, aux);
 
 }
@@ -1293,33 +1665,61 @@ void shl( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 void shr( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
+  int indireccion1, indireccion2;
 
-  if( tOpA==2 ){ //! Op directo
+  if( tOpA == 3 ){
+
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+
+    if( tOpB == 0 ){
+      mv->mem[indireccion1] = mv->mem[indireccion1] >> vOpB;
+    }else if (tOpB == 2 ){
+      direccion2 = calculaDireccion(*mv,vOpB);
+      mv->mem[indireccion1] = mv->mem[indireccion1] >> mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[indireccion1] = mv->mem[indireccion1] >> ObtenerValorDeRegistro(*mv, vOpB, 2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[indireccion1] = mv->mem[indireccion1] >> mv->mem[indireccion2];
+    }
+
+  }else if( tOpA==2 ){ //! Op directo
+
+    direccion1 = calculaDireccion(*mv, vOpA);
 
     if( tOpB == 0 ){ //shl [#] 10
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] >> vOpB;
+      mv->mem[direccion1] = mv->mem[direccion1] >> vOpB;
     }else if (tOpB == 2 ){ //shl [#] [#2]
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] >> mv->mem[mv->reg[0] + vOpB];
+      direccion2 = calculaDireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[direccion1] >> mv->mem[direccion2];
+    }else if( tOpB == 1 ){
+      mv->mem[direccion1] = mv->mem[direccion1] >> ObtenerValorDeRegistro(*mv, vOpB, 2);
     }else{
-      mv->mem[mv->reg[0] + vOpA] = mv->mem[mv->reg[0] + vOpA] >> ObtenerValorDeRegistro(*mv, vOpB, 2);
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      mv->mem[direccion1] = mv->mem[direccion1] >> mv->mem[indireccion2];
     }
 
     aux = mv->mem[mv->reg[0] + vOpA];
 
   }else if( tOpA == 1 ){ //! Op de registro
+
      aux = ObtenerValorDeRegistro(*mv, vOpA, 2);
 
      if( tOpB == 0 ){ //shl EAX 10
       aux = aux >> vOpB;
     }else if (tOpB == 2 ){ //shl EAX [#]
-      aux = aux >> mv->mem[mv->reg[0] + vOpB];
-    }else{
+      direccion2 = calculaDireccion(*mv, vOpB);
+      aux = aux >> mv->mem[direccion2];
+    }else if( tOpB == 1 ){
       aux = aux >> ObtenerValorDeRegistro(*mv, vOpB, 2);
+    }else{
+      indireccion2 = calculaIndireccion(*mv, vOpB);
+      aux = aux >> mv->mem[indireccion2];
     }
     AlmacenaEnRegistro(mv, vOpA, aux, 2);
   }
-  modCC(mv, aux);
 
+  modCC(mv, aux);
 }
 
 void sysWrite( Mv* mv ){
@@ -1607,14 +2007,23 @@ void sysC(char* argv[], int argc){
 
 void jmp( Mv* mv,int tOpA,int vOpA){
 
-     if(tOpA==0){//Inmediato
-        mv->reg[5]=vOpA;
-     }else
-        if(tOpA==1){//De registro
-            mv->reg[5]=ObtenerValorDeRegistro(*mv,vOpA, 2);
-        }else{//Directo
-            mv->reg[5]=mv->mem[mv->reg[0]+vOpA];
-        }
+      int indireccion;
+
+     if( tOpA == 0 ){//Inmediato
+       mv->reg[5] = vOpA;
+     }
+     else if( tOpA == 1 ){//De registro
+       mv->reg[5] = ObtenerValorDeRegistro(*mv,vOpA, 2);
+     }
+     else if( tOpA == 2 ){//Directo
+       direccion2 = calculaDireccion(*mv, vOpB);
+       mv->reg[5] = mv->mem[direccion2];
+     }
+     else{
+       indireccion = calculaIndireccion(*mv, vOpA);
+       mv->reg[5] = mv->mem[indireccion];
+     }
+
 }
 
 //Devuelve segun el tOp el valor dentro del registro, memoria o bien como cte
@@ -1626,8 +2035,10 @@ int DevuelveValor(Mv mv,int tOpA,int vOpA, int numOp){
         aux = vOpA;
     else if( tOpA == 1 )//De Registro
           aux = ObtenerValorDeRegistro(mv,vOpA,numOp);
-        else
-          aux = mv.mem[mv.reg[0] + vOpA];
+        else{
+          direccion1 = calculaDireccion(mv, vOpA);
+          aux = mv.mem[direccion1];
+        }
 
     return aux;
 }
