@@ -199,7 +199,7 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
 void muestraCS(Mv mv){
 
   int i;
-  int direccion = calculaDireccion(mv, mv.reg[0]):
+  int direccion = calculaDireccion(mv, mv.reg[0]);
   int tamSegm = mv.reg[0] >> 16;
   for( i = 0; i < tamSegm; i++){
     printf("%08X\n",mv.mem[direccion++]);
@@ -839,6 +839,7 @@ void add(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
     indireccion1 = calculaIndireccion(*mv, vOpA);
@@ -885,7 +886,7 @@ void add(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
       if( tOpB == 0 ){ // add reg 10
         aux += vOpB;
       }else if( tOpB == 2){ //add reg [vOpB]
-        direccion2 = calculaDireccion(*mv, vOpB)
+        direccion2 = calculaDireccion(*mv, vOpB);
         aux += mv->mem[direccion2];
       }else if( tOpB == 1 ) //reg y reg
         aux += ObtenerValorDeRegistro(*mv,vOpB,2);
@@ -911,6 +912,7 @@ void mul(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
@@ -974,6 +976,7 @@ void sub(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
     if( tOpA == 3 ){ //! OpA -> Indirecto
 
@@ -1041,6 +1044,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
   int auxB;
   int cero = 0;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
 
@@ -1165,6 +1169,7 @@ void swap( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
 
   if( tOpA == 3 ){
@@ -1229,6 +1234,7 @@ void cmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   int sub;
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 0 ){                 //! Op inmediato
 
@@ -1303,6 +1309,7 @@ void and( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   int op;
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3){
 
@@ -1365,6 +1372,7 @@ void or( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   int op;
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3){
 
@@ -1426,6 +1434,7 @@ void xor( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
   int op;
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
     if( tOpA == 3){ //!Op indirecto
 
@@ -1484,8 +1493,8 @@ void xor( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
 void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
-  int indireccion1;
-  int indireccion2;
+  int indireccion1, indireccion2;
+  int direccion1, direccion2;
   char aux;
   int len;
 
@@ -1518,7 +1527,7 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
        indireccion2 = calculaIndireccion(*mv, vOpB);
        len = strlen( mv->mem[indireccion2] );
      }else if( tOpB == 2 ){  //opB directo
-       direccion2 = calculaDireccion(*mv, vOpB)
+       direccion2 = calculaDireccion(*mv, vOpB);
        len = strlen( mv->mem[direccion2] );
      }
 
@@ -1531,7 +1540,7 @@ void slen( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 
   int indireccion1, indireccion2;
-  int direc, direc2;
+  int direccion1, direccion2;
 
   if ( tOpA == 3 ){
 
@@ -1571,6 +1580,7 @@ void smov( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 void scmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ) {
 
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
   int rtado;
 
   if( tOpA == 3 ){
@@ -1605,6 +1615,7 @@ void shl( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3 ){
 
@@ -1666,6 +1677,7 @@ void shr( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
 
   int aux;
   int indireccion1, indireccion2;
+  int direccion1, direccion2;
 
   if( tOpA == 3 ){
 
@@ -2008,6 +2020,7 @@ void sysC(char* argv[], int argc){
 void jmp( Mv* mv,int tOpA,int vOpA){
 
       int indireccion;
+      int direccion;
 
      if( tOpA == 0 ){//Inmediato
        mv->reg[5] = vOpA;
@@ -2016,8 +2029,8 @@ void jmp( Mv* mv,int tOpA,int vOpA){
        mv->reg[5] = ObtenerValorDeRegistro(*mv,vOpA, 2);
      }
      else if( tOpA == 2 ){//Directo
-       direccion2 = calculaDireccion(*mv, vOpB);
-       mv->reg[5] = mv->mem[direccion2];
+       direccion = calculaDireccion(*mv, vOpA);
+       mv->reg[5] = mv->mem[direccion];
      }
      else{
        indireccion = calculaIndireccion(*mv, vOpA);
@@ -2030,6 +2043,7 @@ void jmp( Mv* mv,int tOpA,int vOpA){
 int DevuelveValor(Mv mv,int tOpA,int vOpA, int numOp){
 
     int aux;
+    int direccion1;
 
     if( tOpA == 0 ) //Inmediato
         aux = vOpA;
