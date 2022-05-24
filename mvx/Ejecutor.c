@@ -102,9 +102,9 @@ void cargaMemoria(Mv* mv, char *argv[]){
   if( arch ){
     leeHeader(arch, rtadoHeader, mv);
     if( strcmp(rtadoHeader,"") == 0 ){
+      direccion = calculaDireccion(*mv, mv->reg[0]);
       while( fgets(linea, 32, arch) ){
-        direccion = calculaDireccion(*mv, mv->reg[0]);
-        mv->mem[direccion] = bStringtoInt(linea);
+        mv->mem[direccion++] = bStringtoInt(linea);
         mv->reg[0]++;
       }
     }else
@@ -306,7 +306,7 @@ void Ejecutar(Mv* mv,int codInstr, int numOp,int tOpA,int tOpB,int vOpA,int vOpB
   }else
   if( numOp == 1 )
     switch( codInstr ){
-      case 0x0: //sys
+      case 0x0: //!sys
           sys(mv,tOpA,vOpA, mnem,argv,argc);
         break;
       case 0x1: //!jmp
@@ -570,12 +570,14 @@ ya que el VALOR(variable) esta complementado, pero con ceros a la izquierda, no 
 
 void muestraInstruccion( Mv mv, int instr, int numOp, char* opA, char* opB, char* mnem ){
 
+  int direccion = calculaDireccion(mv, mv.reg[5]);
+
   if( numOp == 2 ){
-    printf("[%04d]:  %08X   %d: %s   %s,%s\n",mv.reg[5]-1,instr,mv.reg[5],mnem,opA,opB);
+    printf("[%04d]:  %08X   %d: %s   %s,%s\n",direccion-1,instr,direccion,mnem,opA,opB);
   }else if( numOp == 1 ){
-    printf("[%04d]:  %08X   %d: %s   %s\n",mv.reg[5]-1,instr,mv.reg[5],mnem,opA);
+    printf("[%04d]:  %08X   %d: %s   %s\n",direccion-1,instr,direccion,mnem,opA);
   }else{
-    printf("[%04d]:  %08X   %d: %s  \n",mv.reg[5]-1,instr,mv.reg[5],mnem);
+    printf("[%04d]:  %08X   %d: %s  \n",direccion-1,instr,direccion,mnem);
   }
 
 }
@@ -590,7 +592,7 @@ void step(Mv* mv,char* argv[],int argc){
   int direccionIP;
 
   direccionIP = calculaDireccion(*mv, mv->reg[5]);
-  instr = mv->mem[direccion]; //fetch
+  instr = mv->mem[direccionIP]; //fetch
   DecodificarInstruccion(instr, &numOp, &codInstr, mnem); //Decodifica el numero de operandos de la instruccion
   mv->reg[5]++;
   DecodificarOperacion(instr, &tOpA, &tOpB, &vOpA, &vOpB, numOp);
@@ -605,7 +607,7 @@ void obtenerOperando(int tOp, int vOp, char res[], int numOp){
     int aux=0;
     char auxS[7] = "";
     char cadOffset[4] = "";
-    int offset;
+    int reg, offset;
 
     if( tOp != 3)
       vOp = complemento2(vOp,numOp);
@@ -712,7 +714,7 @@ void DecodificarOperacion(int instr,int *tOpA,int *tOpB,int *vOpA,int *vOpB, int
     case 1:
       *tOpA = (instr & 0x00C00000) >> 22;
       *vOpA = (instr & 0x0000FFFF);
-      *vOpA = complemento2(*vOpA, 1); //ojito
+      *vOpA = complemento2(*vOpA, 1);
       *tOpB = 0;
       *vOpB = 0;
       break;
@@ -736,7 +738,7 @@ u32 bStringtoInt(char* string){
   int i;
   u32 ac = 0;
   int exp = 0;
-  int auxb = 0;
+
   for( i = 31; i >= 0 ; i-- ){
     if( string[i] == '1'){
        ac += pow(2,exp);
@@ -811,10 +813,8 @@ int calculaDireccion(Mv mv, int vOp){
 void mov(Mv* mv,int tOpA,int tOpB,int vOpA,int vOpB){
 
   //Variables de op de reg.
-  int codReg;
   int indireccion1, indireccion2;
   int direccion1, direccion2;
-  int sectorReg;
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
     indireccion1 = calculaIndireccion(*mv, vOpA);
@@ -1318,8 +1318,8 @@ void cmp( Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB ){
     }
   }else{
 
-    indireccion2 = calculaIndireccion(*mv, vOpA);
-    aux = mv->mem[indireccion2];
+    indireccion1 = calculaIndireccion(*mv, vOpA);
+    aux = mv->mem[indireccion1];
 
     if( tOpB == 0 ){
       sub = aux - vOpB;
@@ -1772,14 +1772,14 @@ void sysWrite( Mv* mv ){
 
     u32 celda, celdaMax, aux, aux2;
     int i;
-    int num;
     char endl[3];
+    int segmento, tamSegmento;
 
     //Los 12 bits menos significativos me daran informacion de modo de lectura
     aux = mv->reg[0xA] & 0x00000FFF;      //12 bits de AX
     celda = calculaDireccion(*mv, mv->reg[0xD]); //EDX -> Posicion de mem inicial desde donde empiezo la lect
     segmento = mv->reg[0xD] >> 16;
-    tamSegmento = mv->reg[segmeto] >> 16;
+    tamSegmento = mv->reg[segmento] >> 16;
     celdaMax = mv->reg[0xC] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
 
     if( celdaMax >= tamSegmento ){
@@ -1822,18 +1822,24 @@ void sysRead( Mv* mv ){
     u32 celda, celdaMax, aux;
     int i;
     int num;
-    int prompt = 0;
-    int direccion;
+    int segmento, tamSegmento;
 
     //Los 12 bits menos significativos me daran informacion de modo de lectura
     aux = mv->reg[0xA] & 0x00000FFF;      //12 bits de AX
-    celda = mv->reg[0xE];                 //EDX -> // Posicion de mem inicial desde donde empiezo la lect
+    celda = calculaDireccion(*mv, mv->reg[0xD]); //EDX -> Posicion de mem inicial desde donde empiezo la lect
+    segmento = mv->reg[0xD] >> 16;
+    tamSegmento = mv->reg[segmento] >> 16;
     celdaMax = mv->reg[0xC] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
     printf("\n");
+    if( celdaMax >= tamSegmento ){
+      printf("Segmentation fault");
+      exit(-1);
+    }else{
+
     //Prendido octavo bit -> Leo string, guardo caracter a caracter
     if( (aux & 0x100) == 0x100 ){
 
-      char string[1000]="";
+      char *string = (char*)malloc(celdaMax*sizeof(char));
 
       if( (aux & 0x800) == 0x000 ) //prompt
         printf("[%04d]:",celda);
@@ -1841,16 +1847,12 @@ void sysRead( Mv* mv ){
       scanf("%s",string);
 
       i = 0;
-      direccion = calculaDireccion(*mv, mv->reg[0]);
-      direccion += celda;
-      while( (i < strlen(string)) && (string[i] != "") ){
-        mv->mem[ direccion + i ] = string[i];
+      while( i <= strlen(string) ){
+        mv->mem[ celda + i ] = string[i];
         i++;
       }
 
     }else
-
-      direccion = calculaDireccion(*mv, mv->reg[0]);
 
       for( i = celda; i < celda + celdaMax ; i++ ){
 
@@ -1864,9 +1866,10 @@ void sysRead( Mv* mv ){
         else if( (aux & 0x00F) == 0x008) //Interpreta hexadecimal
           scanf("%X", &num);
 
-        mv->mem[direccion + i] = num;
+        mv->mem[i] = num;
 
       }
+    }
 }
 
 void sysStringRead(Mv* mv){
@@ -1980,7 +1983,8 @@ int apareceFlag(char* argv[],int argc, char* flag ){
 void sysBreakpoint( Mv* mv, char* argv[],int argc,char mnem[],int llamaP){ //! Sin probar
 
   char aux[10]={""},opA[7]={""},opB[7]={""}; //max 4096#9862
-  int i=0,j=0,noNum, num,tOpB=0,IPinicial;
+  int i=0;
+  int direccionDS, direccionIP, IPinicial;
 
   if( !llamaP )
     sysC( argv, argc );
@@ -2019,16 +2023,18 @@ void sysBreakpoint( Mv* mv, char* argv[],int argc,char mnem[],int llamaP){ //! S
 
    if ( apareceFlag( argv, argc, "-d" ) ){
 
-    IPinicial=mv->reg[5];
+    IPinicial = calculaDireccion(*mv, mv->reg[5]);
+    direccionDS = calculaDireccion(*mv, mv->reg[0]);
     i=0;
-    while(i<10 && IPinicial+i<mv->reg[0]){
+    while( i < 10 && IPinicial+i < direccionDS ){
       falsoStep(mv,opA,opB,i); //Muestro los operandos y paso a la siguiente opeeracion sin ejecutar
       i++;
     }
-    mv->reg[5]=IPinicial;
+    mv->reg[5]= (0x0003 << 16) | IPinicial;
+    direccionIP = calculaDireccion(*mv, mv->reg[5]);
     printf("\nRegistros: \n");
-    printf("DS =    %06d  |              |                 |                |\n",mv->reg[0]);
-    printf("                | IP =   %06d|                 |                |\n",mv->reg[5]);
+    printf("DS =    %06d  |              |                 |                |\n",direccionDS);
+    printf("                | IP =   %06d|                 |                |\n",direccionIP);
     printf("CC  =    %06d | AC =   %06d|EAX =     %06d |EBX =     %06d|\n",mv->reg[8],mv->reg[9],mv->reg[10],mv->reg[11]);
     printf("ECX =   %06d  |EDX =   %06d|EEX =     %06d |EFX =     %06d|\n",mv->reg[12],mv->reg[13],mv->reg[14],mv->reg[15]);
 
@@ -2044,16 +2050,18 @@ void falsoStep(Mv* mv,char opA[],char opB[],int i){ //! Sin probar
   char mnem[5];
   int tOpA, tOpB;
   int vOpA, vOpB;
+  int direccionIP;
 
-  instr = mv->mem[mv->reg[5]]; //fetch
+  direccionIP = calculaDireccion(*mv, mv->reg[5]);
+  instr = mv->mem[direccionIP]; //fetch
   DecodificarInstruccion(instr,&numOp,&codInstr,mnem); //Decodifica el numero de operandos de la instruccion
   mv->reg[5]++;
   DecodificarOperacion(instr,&tOpA,&tOpB,&vOpA,&vOpB,numOp);
   disassembler(mv, tOpA, tOpB, vOpA, vOpB, opA, opB, numOp);
   if(i==0)
-    printf("\n>[%04d]:  %x   %d: %s   %s,%s",mv->reg[5]-1,instr,mv->reg[5],mnem,opA,opB);
+    printf("\n>[%04d]:  %x   %d: %s   %s,%s",direccionIP-1,instr,direccionIP,mnem,opA,opB);
   else
-    printf("\n [%04d]:  %x   %d: %s   %s,%s",mv->reg[5]-1,instr,mv->reg[5],mnem,opA,opB);
+    printf("\n [%04d]:  %x   %d: %s   %s,%s",direccionIP-1,instr,direccionIP,mnem,opA,opB);
 
 }
 
@@ -2071,18 +2079,18 @@ void jmp( Mv* mv,int tOpA,int vOpA){
       int direccion;
 
      if( tOpA == 0 ){//Inmediato
-       mv->reg[5] = vOpA;
+       mv->reg[5] = (0x3 << 16) | vOpA;
      }
      else if( tOpA == 1 ){//De registro
-       mv->reg[5] = ObtenerValorDeRegistro(*mv,vOpA, 2);
+       mv->reg[5] = (0x3 << 16) | ObtenerValorDeRegistro(*mv,vOpA, 2);
      }
      else if( tOpA == 2 ){//Directo
        direccion = calculaDireccion(*mv, vOpA);
-       mv->reg[5] = mv->mem[direccion];
+       mv->reg[5] = (0x3 << 16) | mv->mem[direccion];
      }
-     else{
+     else{                //Indirecto
        indireccion = calculaIndireccion(*mv, vOpA);
-       mv->reg[5] = mv->mem[indireccion];
+       mv->reg[5] = (0x3 << 16) | mv->mem[indireccion];
      }
 
 }
