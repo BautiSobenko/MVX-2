@@ -587,8 +587,10 @@ void step(Mv* mv,char* argv[],int argc){
   char mnem[5], opA[7] = "",opB[7] = "";
   int tOpA, tOpB;
   int vOpA, vOpB;
+  int direccionIP;
 
-  instr = mv->mem[mv->reg[5]]; //fetch
+  direccionIP = calculaDireccion(*mv, mv->reg[5]);
+  instr = mv->mem[direccion]; //fetch
   DecodificarInstruccion(instr, &numOp, &codInstr, mnem); //Decodifica el numero de operandos de la instruccion
   mv->reg[5]++;
   DecodificarOperacion(instr, &tOpA, &tOpB, &vOpA, &vOpB, numOp);
@@ -602,11 +604,17 @@ void obtenerOperando(int tOp, int vOp, char res[], int numOp){
 
     int aux=0;
     char auxS[7] = "";
+    char cadOffset[4] = "";
+    int offset;
 
-    vOp = complemento2(vOp,numOp);
+    if( tOp != 3)
+      vOp = complemento2(vOp,numOp);
+    else
+      offset = complemento2(vOp >> 4, numOp);
 
     if( tOp == 0 ){ //Inmediato
       itoa(vOp, res, 10);
+
     }else if( tOp == 1 ){ // De registro
       aux = (vOp & 0x30) >> 4; //Obtenemos el sector de registro
       strcpy(auxS, nombreReg[vOp & 0xF] );//obtengo nombre de reg (a,b,c,etc)
@@ -640,6 +648,32 @@ void obtenerOperando(int tOp, int vOp, char res[], int numOp){
         itoa(vOp,auxS,10);
         strcat(res,auxS);
         strcat(res,"]");
+
+    }else if( tOp == 3 ){ //[reg + offset]
+
+       reg = vOp & 0xF;
+
+       strcpy(auxS, nombreReg[reg] );
+
+       res[0] = '[';
+
+       if( reg > 9 ){
+         res[1] = 'E';
+         res[2] = auxS[0];
+         res[3] = 'X';
+       }else{
+         res[1] = auxS[0];
+         res[2] = auxS[1];
+       }
+       if( offset != 0 ){
+         if( offset > 0 )
+           strcat(res,"+");
+         itoa(offset, cadOffset, 10);
+         strcat(res, cadOffset);
+       }
+
+       strcat(res,"]");
+
     }
 }
 
@@ -739,7 +773,7 @@ int calculaIndireccion(Mv mv, int vOp){
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( (mv.reg[codReg] < 0) && ((regL + offset) > tamSegm) && ((regL + offset) < inicioSegm) ){
+  if( (mv.reg[codReg] < 0) && ((regL + offset) >= tamSegm) && ((regL + offset) <= inicioSegm) ){
     printf("Segmentation fault");
     exit(-1);
   }
@@ -764,7 +798,7 @@ int calculaDireccion(Mv mv, int vOp){
   //Obtengo direccion relativa al segmento
   inicioSegm = segm & 0x0000FFFF;
 
-  if( (vOp < 0) &&(vOp > tamSegm) ){
+  if( (vOp < 0) && (vOp >= tamSegm) ){
     printf("Segmentation fault");
     exit(-1);
   }
@@ -1742,9 +1776,17 @@ void sysWrite( Mv* mv ){
     char endl[3];
 
     //Los 12 bits menos significativos me daran informacion de modo de lectura
-    aux = mv->reg[10] & 0x00000FFF;      //12 bits de AX
-    celda = mv->reg[13];                 //EDX -> // Posicion de mem inicial desde donde empiezo la lect
-    celdaMax = mv->reg[12] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
+    aux = mv->reg[0xA] & 0x00000FFF;      //12 bits de AX
+    celda = calculaDireccion(*mv, mv->reg[0xD]); //EDX -> Posicion de mem inicial desde donde empiezo la lect
+    segmento = mv->reg[0xD] >> 16;
+    tamSegmento = mv->reg[segmeto] >> 16;
+    celdaMax = mv->reg[0xC] & 0x0000FFFF; //CX (Cuantas posiciones de mem como max)
+
+    if( celdaMax >= tamSegmento ){
+      printf("Segmentation fault");
+      exit(-1);
+    }else{
+
      for( i = celda; i < celda + celdaMax ; i++ ){
 
        if( (aux & 0x800) == 0 ){ //prompt
@@ -1758,20 +1800,21 @@ void sysWrite( Mv* mv ){
 
 
         if ( (aux & 0x0F0) == 0x010 ){ //Imprime caracter
-          int aux2 = mv->mem[mv->reg[0] + i] & 0xFF; // 1er byte
+          int aux2 = mv->mem[i] & 0xFF; // 1er byte
           if( aux2 != 127 && aux2 >= 32 && aux2 <= 255 ) //Verifico rango del ascii
             printf("%c%s ", aux2, endl );
           else
             printf(".%s",endl);
         }else if( (aux & 0x00F) == 0x001 ) //Imprime decimal
-          printf("%d%s", mv->mem[mv->reg[0] + i], endl);
+          printf("%d%s", mv->mem[i], endl);
         else if( (aux & 0x00F) == 0x004) //Imprime octal
-          printf("%O%s", mv->mem[mv->reg[0] + i], endl);
+          printf("%O%s", mv->mem[i], endl);
         else if( (aux & 0x00F) == 0x008) //Imprime hexadecimal
-          printf("%X%s", mv->mem[mv->reg[0] + i], endl);
+          printf("%X%s", mv->mem[i], endl);
 
       }
-    printf("\n");
+      printf("\n");
+    }
 }
 
 void sysRead( Mv* mv ){
@@ -1780,6 +1823,7 @@ void sysRead( Mv* mv ){
     int i;
     int num;
     int prompt = 0;
+    int direccion;
 
     //Los 12 bits menos significativos me daran informacion de modo de lectura
     aux = mv->reg[0xA] & 0x00000FFF;      //12 bits de AX
@@ -1797,12 +1841,16 @@ void sysRead( Mv* mv ){
       scanf("%s",string);
 
       i = 0;
+      direccion = calculaDireccion(*mv, mv->reg[0]);
+      direccion += celda;
       while( (i < strlen(string)) && (string[i] != "") ){
-        mv->mem[ mv->reg[0] + celda + i ] = string[i];
+        mv->mem[ direccion + i ] = string[i];
         i++;
       }
 
     }else
+
+      direccion = calculaDireccion(*mv, mv->reg[0]);
 
       for( i = celda; i < celda + celdaMax ; i++ ){
 
@@ -1816,7 +1864,7 @@ void sysRead( Mv* mv ){
         else if( (aux & 0x00F) == 0x008) //Interpreta hexadecimal
           scanf("%X", &num);
 
-        mv->mem[mv->reg[0] + i] = num;
+        mv->mem[direccion + i] = num;
 
       }
 }
