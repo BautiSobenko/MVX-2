@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <time.h>
 
 const char* twoOp[] = {
     "mov","add","sub",
@@ -22,7 +23,26 @@ const char* nombreReg[] = {
 
 typedef unsigned int u32;
 
+typedef struct TDisco{
+
+  char nombreArch[100];
+  char tArchivo[5];
+  u32 numVersion;
+  char guid[17];
+  u32 fechaCreacion;
+  u32 horaCreacion;
+  unsigned char tipo;
+  unsigned char cilindros;
+  unsigned char cabezas;
+  unsigned char sectores;
+  u32 tamSector;
+  u32 ultimoEstado;
+
+}TDisco;
+
 typedef struct Mv{
+
+  TDisco listaVDD[255];
 
   int reg[16];
 
@@ -75,10 +95,13 @@ void call(Mv *mv,int tOpA,int vOpA);
 void ret();
 int calculaDireccion(Mv mv, int vOp);
 int calculaIndireccion(Mv mv, int vOp);
+void abreDisco( TDisco *listaVDD, int *cantDiscos, char *nombreArch );
 
 int main(int argc, char *argv[]) {
 
   Mv mv;
+
+
 
   cargaMemoria(&mv, argv);
 
@@ -88,6 +111,19 @@ int main(int argc, char *argv[]) {
   }while( (0 <= (mv.reg[5] & 0x0000FFFF) ) && ( (mv.reg[5] & 0x0000FFFF) < (mv.reg[0] & 0x0000FFFF) ));
 
   return 0;
+
+}
+
+void cargaDiscos(int argc, char *argv[], TDisco *listaVDD){
+
+  int contCantDiscos = 0;
+
+  for( int i = 0; i <= argc ; i++){
+    if( strstr(argv[i], ".vdd") != NULL  ){
+      abreDisco(listaVDD, contCantDiscos, argv[i]);
+      contCantDiscos++;
+    }
+  }
 
 }
 
@@ -132,7 +168,7 @@ void cargaRegistros(Mv* mv, int* bloquesHeader){
 
   //SS a continuacion del ES
   mv->reg[1] = (bloquesHeader[2] << 16) & 0xFFFF0000; //(H)
-  mv->reg[1] +=  bloquesHeader[3];                   //(L)
+  mv->reg[1] +=  bloquesHeader[3];                    //(L)
 
   //Inicializacion de HP
   mv->reg[4] = 0x00020000;
@@ -192,6 +228,84 @@ void leeHeader(FILE* arch, char* rtadoHeader, Mv* mv){
       cargaRegistros(mv, bloquesHeader);
   }else
     strcpy(rtadoHeader,"[!] El formato del archivo .mv2 no es correcto");
+}
+
+
+void abreDisco( TDisco *listaVDD,int indiceDiscos, char *nombreArch ){
+
+
+  unsigned long guidH, guidL;
+  u32 fecha, hora, tamSector, numVersion;
+  unsigned char cilindros, cabezas, sectores;
+
+  time_t t = time(NULL);
+  struct tm tm = *localtime(&t);
+
+  FILE *disco = fopen(nombreArch, "rb");
+  int existe = (disco != NULL);
+
+  //Chequea existencia de archivo
+  if( !existe ){
+
+    fclose(disco);
+    *disco = fopen(nombreArch, "w+");
+
+    fwrite("VDD0", 4*sizeof(char), 1, disco);
+    fwrite(1, sizeof(u32), 1, disco);
+    guidH = rand();
+    guidL = rand();
+    fwrite(guidH, sizeof(long), 1, disco);
+    fwrite(guidL, sizeof(long), 1, disco);
+    fecha = (tm.tm_year + 1900) << 16;
+    fecha |= (tm.tm_mon + 1) << 8;
+    fecha |= (tm.tm_mday + 1);
+    fwrite(fecha, sizeof(u32), 1, disco);
+    hora = tm.tm_hour << 12;
+    hora |= (tm.tm_min << 8);
+    hora |= (tm.tm_sec << 4);
+    fwrite(hora, sizeof(u32), 1, disco);
+    fwrite(1, sizeof(unsigned char), 1, disco);
+    fwrite(128, sizeof(unsigned char), 1, disco);
+    fwrite(128, sizeof(unsigned char), 1, disco);
+    fwrite(128, sizeof(unsigned char), 1, disco);
+    fwrite(512, sizeof(u32), 1, disco);
+    fwrite(0,472*sizeof(unsigned char),1,disco);
+
+  }else{
+
+
+    fclose(disco);
+    *disco = fopen(nombreArch, "r+");
+  }
+
+  rewind(disco);
+  fread(tipoArch, 4*sizeof(unsigned char), 1, disco);
+  fread(numVersion, sizeof(u32), 1, disco);
+  fread(guidH, sizeof(long), 1, disco);
+  fread(guidL, sizeof(long), 1, disco);
+  fread(fecha, 4*sizeof(unsigned char), 1, disco);
+  fread(hora, 4*sizeof(unsigned char), 1, disco);
+  fread(tipo, sizeof(unsigned char), 1, disco);
+  fread(cilindros, sizeof(unsigned char), 1, disco);
+  fread(cabezas, sizeof(unsigned char), 1, disco);
+  fread(sectores, sizeof(unsigned char), 1, disco);
+  fread(tamSector, sizeof(u32), 1, disco);
+
+
+
+  strcpy(listaVDD[indiceDiscos].nombreArch, nombreArch);
+  strcpy(listaVDD[indiceDiscos].tArchivo, tipoArch);
+  listaVDD[indiceDiscos].numVersion = numVersion;
+  strcpy(listaVDD[indiceDiscos].guid, guidH);
+  strcat(listaVDD[indiceDiscos].guid, guidL);
+  strcpy(listaVDD[indiceDiscos].fechaCreacion, fecha);
+  strcpy(listaVDD[indiceDiscos].horaCreacion, hora);
+  listaVDD[indiceDiscos].tipo = tipo;
+  listaVDD[indiceDiscos].cilindros = cilindros;
+  listaVDD[indiceDiscos].cabezas = cabezas;
+  listaVDD[indiceDiscos].sectores = sectores;
+  listaVDD[indiceDiscos].tamSector = tamSector;
+
 }
 
 
@@ -384,7 +498,7 @@ void pop(Mv *mv, int tOpA, int vOpA){
     //Recupero el valor de SP
     int valorSP = (mv->reg[6] & 0x0000FFFF);
 
-    if( valorSP > (inicioSS + tamSS) ){
+    if( valorSP >= (inicioSS + tamSS) ){
       printf (" STACK UNDERFLOW ");
       exit(-1);
     }
@@ -403,10 +517,10 @@ void push(Mv *mv, int tOpA, int vOpA){
     int inicioSS = mv->reg[1] & 0x0000FFFF;
 
     //Recupero el valor de SP
-    int valorSP = mv->reg[6] & 0x0000FFFF;
+    int valorSP = calculaDireccion(*mv, mv->mem[6]);
 
     //Si el SP supera el SS, stack overflow
-    if( mv->reg[6] <= inicioSS ){
+    if( (mv->reg[6] & 0xFFFF) <= inicioSS ){
       printf (" STACK OVERFLOW ");
       exit(-1);
     }
@@ -440,15 +554,15 @@ void ret(Mv *mv){
     int inicioSS = (mv->reg[1] & 0x0000FFFF);
 
     //Recupero el valor de SP
-    int valorSP = (mv->reg[6] & 0x0000FFFF);
+    int valorSP = calculaDireccion(*mv, mv->reg[6]);
 
-    if( valorSP > (inicioSS + tamSS) ){
+    if( valorSP >= (inicioSS + tamSS) ){
       printf (" STACK UNDERFLOW ");
       exit(-1);
     }
     else{
       //"salta" colocando la direccion de retorno en el reg IP
-      mv->reg[5] = mv->mem[valorSP++];
+      mv->reg[5] = (0x3 << 16) | mv->mem[valorSP++];
     }
 
 }
@@ -456,15 +570,16 @@ void ret(Mv *mv){
 void call(Mv *mv, int tOpA, int vOpA){
 
     int direccion;
+    int indireccion;
 
     //Recupero el inicio del SS
     int inicioSS = mv->reg[1] & 0x0000FFFF;
 
     //Recupero el valor de SP
-    int valorSP = mv->reg[6] & 0x0000FFFF;
+    int valorSP = calculaDireccion(*mv, mv->reg[6]);
 
     //Si el SP supera el SS, stack overflow
-    if( mv->reg[6] <= inicioSS ){
+    if( valorSP < inicioSS ){
       printf (" STACK OVERFLOW ");
       exit(-1);
     }
@@ -473,23 +588,23 @@ void call(Mv *mv, int tOpA, int vOpA){
         valorSP--;
         mv->mem[valorSP] = mv->reg[5]++; //Guardo el IP para luego retornar
         if( tOpA == 0 ){             //Inmediato
-            mv->reg[5] = vOpA;
+            mv->reg[5] = (0x3 << 16) | vOpA;
         }else
             if( tOpA == 1 ){         //De registro
-                mv->reg[5] = ObtenerValorDeRegistro(*mv,vOpA, 1);
+                mv->reg[5] = (0x3 << 16) | ObtenerValorDeRegistro(*mv,vOpA, 1);
             }else if( tOpA == 2 ){   //Directo
               direccion = calculaDireccion(*mv, vOpA);
-              mv->reg[5] = mv->mem[direccion];
+              mv->reg[5] = (0x3 << 16) | mv->mem[direccion];
             }else{                   //Indirecto
-              direccion = calculaIndireccion(*mv, vOpA);
-              mv->reg[5] = mv->mem[direccion];
+              indireccion = calculaIndireccion(*mv, vOpA);
+              mv->reg[5] = (0x3 << 16) | mv->mem[indireccion];
             }
     }
 }
 
 void stop(Mv* mv){
 
-  mv->reg[5] = mv->reg[0] & 0x0000FFFF;
+  mv->reg[5] = (0x3 << 16) | (mv->reg[0] & 0x0000FFFF);
 
 }
 
@@ -1079,6 +1194,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
   int cero = 0;
   int indireccion1, indireccion2;
   int direccion1, direccion2;
+  int direccionIP = calculaDireccion(*mv, vOpB);
 
   if( tOpA == 3 ){ //! OpA -> Indirecto
 
@@ -1089,7 +1205,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
         mv->mem[indireccion1] /= vOpB;
       }
       else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else if( tOpB == 2){ //add [vOpA] [vOpB]
       direccion2 = calculaDireccion(*mv, vOpB);
       if( mv->mem[direccion2] ){
@@ -1097,7 +1213,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
         mv->mem[indireccion1] /= mv->mem[direccion2];
       }
       else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else if( tOpB == 1 ){
        auxB = ObtenerValorDeRegistro(*mv,vOpB,2);
        if( auxB ){
@@ -1105,14 +1221,14 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
          mv->mem[indireccion1] /= auxB;
        }
        else
-         printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+         printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else{
       indireccion2 = calculaIndireccion(*mv, vOpB);
       if( mv->mem[indireccion2] ){
         mv->reg[9] = mv->mem[indireccion1] % mv->mem[indireccion2];
         mv->mem[indireccion1] /= mv->mem[indireccion2];
       }else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }
 
     modCC(mv, mv->mem[mv->reg[0] + vOpA]);
@@ -1127,7 +1243,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
         mv->mem[direccion1] /= vOpB;
       }
       else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else if( tOpB == 2){ //add [vOpA] [vOpB]
       direccion2 = calculaDireccion(*mv, vOpB);
       if( mv->mem[direccion2] ){
@@ -1135,7 +1251,7 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
         mv->mem[direccion1] /= mv->mem[direccion2];
       }
       else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else if( tOpB == 1 ){
        auxB = ObtenerValorDeRegistro(*mv,vOpB,2);
        if( auxB ){
@@ -1143,14 +1259,14 @@ void divi(Mv* mv, int tOpA, int tOpB, int vOpA, int vOpB){
          mv->mem[direccion1] /= auxB;
        }
        else
-         printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+         printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }else{
       indireccion2 = calculaIndireccion(*mv, vOpB);
       if( mv->mem[indireccion2] ){
         mv->reg[9] = mv->mem[direccion1] % mv->mem[indireccion2];
         mv->mem[direccion1] /= mv->mem[indireccion2];
       }else
-        printf("\n[%04d] [!] Division por cero",mv->reg[5]-1);
+        printf("\n[%04d] [!] Division por cero",direccionIP-1);
     }
     modCC(mv, mv->mem[direccion1]);
   }
@@ -1947,6 +2063,119 @@ void sysCls(){
 
 }
 
+void sysVDD(Mv *mv){
+
+  int numOp;
+  int cantSectores;
+  int numCilindro;
+  int numCabeza;
+  int numSector;
+  int numDisco;
+  int celdaInicio;
+  u32 seek;
+
+  FILE *disco = fopen(nombreArch, "r+");
+
+  //AH
+  numOp = (mv->reg[0xA] >> 16) & 0xFF00;
+
+  //AL
+  cantSectores = mv->reg[0xA] & 0xFF;
+
+  //CH
+  numCilindro = (mv->reg[0xC] >> 16) & 0xFF00;
+
+  //CL
+  numCabeza = mv->reg[0xC] & 0xFF;
+
+  //DH
+  numSector = (mv->reg[0xD] >> 16) & 0xFF00;
+
+  //DL
+  numDisco = mv->reg[0xD] & 0xFF;
+
+  //EBX
+  celdaInicio = mv->reg[0xB];
+
+  seek = 512 + numCilindro * mv->listaVDD[numDisco]->cilindros * cantSectores * 512 + numCabeza * cantSectores * 512 + numSector * 512;
+
+  fseek(disco, seek, SEEK_SET);
+
+  if( numDisco > cantDiscos )
+    mv->reg[0xA] = 0x31 << 8;
+  else{
+
+    if( numOp == 0x0 ){         //Consultar el ultimo estado
+      mv->reg[0xA] = mv->listaVDD[numDisco]->ultimoEstado & 0xFF00;
+    }
+
+    if( numCilindro > mv->listaVDD[numDisco]->cilindros )
+      mv->listaVDD[numDisco]->ultimoEstado = 0xB << 8;
+
+    else if( numCabeza > mv->listaVDD[numDisco]->cabezas )
+      mv->listaVDD[numDisco]->ultimoEstado = 0xC << 8;
+
+    else if( numSector > mv->listaVDD[numDisco]->sectores )
+      mv->listaVDD[numDisco]->ultimoEstado = 0xD << 8;
+
+    else{
+
+      if( numOp == 0x2 ){   //Leer disco
+
+        if( !verificaDesborde(*mv, celdaInicio, cantSectores * 128 ) //Como los sectores tienen 512 bytes y las celdas de memoria 4 bytes, necesitamos 128 celdas por cada sector a leer/escribir
+          mv->listaVDD[numDisco]->ultimoEstado = 0x4 << 8;
+        else{
+          direccion = calculaDireccion(*mv, celdaInicio);
+          //Leo celda a celda el sector entero
+          for( int i = direccion ; i < direccion + cantSectores * 128 ; i++ ){
+            fread(mv->mem[i], 4, 1, disco);
+          }
+          mv->listaVDD[numDisco]->ultimoEstado = 0;
+        }
+
+      }else if( numOp == 0x3 ){   //Escribir en disco
+
+        if( seek + cantSectores * 512 > 1e9 )
+          mv->listaVDD[numDisco]->ultimoEstado = 0xFF << 8;
+        else if( !verificaDesborde(*mv, celdaInicio, cantSectores * 128 ) //Como los sectores tienen 512 bytes y las celdas de memoria 4 bytes, necesitamos 128 celdas por cada sector a leer/escribir
+          mv->listaVDD[numDisco]->ultimoEstado = 0xCC << 8;
+        else{
+          for( int i = direccion ; i < direccion + cantSectores * 128 ; i++ ){
+            fwrite(mv->mem[i], 4, 1, disco);
+          }
+          mv->listaVDD[numDisco]->ultimoEstado = 0;
+       }
+
+      }
+
+    }else if( numOp == 0x8){    //Obtener parametros del disco
+
+      mv->reg[0xC] = mv->listaVDD[numDisco]->cilindros & 0xFF00;
+      mv->reg[0xC] = mv->listaVDD[numDisco]->cabezas & 0xFF;
+      mv->reg[0xD] = mv->listaVDD[numDisco]->sectores & 0xFF00;
+
+    }
+
+  }
+
+}
+
+int verificaDesborde(Mv mv, int direccionInicio, int celdas){
+
+  int segmento;
+  int direccion;
+  int tamSegmento;
+
+  segmento = direccionInicio >> 16
+
+  direccion = direccionInicio & 0xFFFF
+
+  tamSegmento = mv->reg[segmento] >> 16;
+
+  return ((direccion + celdas) < tamSegmento);
+
+}
+
 void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc){
 
   if( vOpA == 0x2 )      //! Write
@@ -1961,6 +2190,9 @@ void sys( Mv* mv, int tOpA, int vOpA ,char mnem[],char* argv[],int argc){
     sysStringWrite(mv);
   else if( vOpA == 0x7)  //! ClearScreen
     sysCls();
+  else if ( vOpA == 0xD ){
+    sysVDD(mv)
+  }
 
 }
 
